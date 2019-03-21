@@ -8,6 +8,7 @@
 #include <tvm/relay/pass.h>
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/pattern_functor.h>
+#include "pass_util.h"
 #include "../ir/type_functor.h"
 
 namespace tvm {
@@ -367,6 +368,29 @@ bool IsAllPositiveConstant(const Expr& expr) {
   } else {
     return false;
   }
+}
+
+Type TypeSubst(const Type& type, const TypeVar& tvar, const Type& subst) {
+  return TypeSubst(type, tvm::Map<TypeVar, Type>({{tvar, subst}}));
+}
+
+Expr TypeSubst(const Expr& expr, const TypeVar& tvar, const Type& subst) {
+  return TypeSubst(expr, tvm::Map<TypeVar, Type>({{tvar, subst}}));
+}
+
+Type TypeSubst(const Type& type, const tvm::Map<TypeVar, Type>& subst_map) {
+  return Bind(type, subst_map);
+}
+
+Expr TypeSubst(const Expr& expr, const tvm::Map<TypeVar, Type>& subst_map) {
+  struct TypeSubstMutator : ExprMutator {
+    const tvm::Map<TypeVar, Type>& subst_map;
+    TypeSubstMutator(const tvm::Map<TypeVar, Type>& subst_map) : subst_map(subst_map) { }
+    Type VisitType(const Type& t) final {
+      return TypeSubst(t, subst_map);
+    }
+  };
+  return TypeSubstMutator(subst_map)(expr);
 }
 
 }  // namespace relay

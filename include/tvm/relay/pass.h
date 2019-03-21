@@ -540,6 +540,12 @@ Expr ToANormalForm(const Expr& e, const Module& mod);
  */
 Expr ToGraphNormalForm(const Expr& e);
 
+/*! \brief Aggressive constant propagation/constant folding/inlining.
+ * It will do as much computation in compile time as possible.
+ * It has two benefit: remove runtime overhead, and allow more optimization (typically fusion).
+ * As a side effect, code size will explode.
+ */
+Expr PartialEval(const Expr& e);
 }  // namespace relay
 }  // namespace tvm
 
