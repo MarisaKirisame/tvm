@@ -184,6 +184,26 @@ class VarNode : public ExprNode {
 
 RELAY_DEFINE_NODE_REF(Var, VarNode, Expr);
 
+/*! \brief Hash Var by it's id.
+ * Different VarNode might has same vid, and they are considered to be the same var in such case.
+ * Use VarHash to hash Var by id.
+ */
+struct VarHash {
+  size_t operator()(const Var& v) const {
+    return v->vid.hash();
+  }
+};
+
+/*! \brief Compare Var by it's id.
+ * Different VarNode might has same vid, and they are considered to be the same var in such case.
+ * Use VarEqual to compare Var by id.
+ */
+struct VarEqual {
+  bool operator()(const Var& l, const Var& r) const {
+    return l->vid.get() == r->vid.get();
+  }
+};
+
 /*!
  * \brief Global variable that leaves in the top-level module.
  * This is used to enable recursive calls between function.
@@ -521,7 +541,7 @@ RELAY_DEFINE_NODE_REF(RefWrite, RefWriteNode, Expr);
  * rewriting pass such as layout or type transformation.
  *
  * Subclass TempExprNode allows us to pattern match on
- * specific kind TempExpr and use them for expression rewriting.
+ * specific kind of TempExpr and use them for expression rewriting.
  *
  * TempExpr should only be used within a pass,
  */
@@ -538,6 +558,25 @@ class TempExprNode : public ExprNode {
 };
 
 RELAY_DEFINE_NODE_REF(TempExpr, TempExprNode, Expr);
+
+class Annotate;
+class AnnotateNode : public ExprNode {
+ public:
+  Expr expr;
+  NodeRef annotation;
+  void VisitAttrs(tvm::AttrVisitor* v) final {
+    v->Visit("expr", &expr);
+    v->Visit("annotation", &annotation);
+    v->Visit("_checked_type_", &checked_type_);
+  }
+
+  TVM_DLL static Annotate make(Expr expr, NodeRef annotation);
+
+  static constexpr const char* _type_key = "relay.AnnotateNode";
+  TVM_DECLARE_NODE_TYPE_INFO(AnnotateNode, ExprNode);
+};
+
+RELAY_DEFINE_NODE_REF(Annotate, AnnotateNode, Expr);
 
 // implementataions
 inline const Type& ExprNode::checked_type() const {
