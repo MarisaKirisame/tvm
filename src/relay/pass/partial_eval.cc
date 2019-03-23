@@ -206,7 +206,7 @@ class Environment {
 
   struct RAII {
     Environment* env_;
-    explicit RAII(Environment* env_) : env_(env_) {
+    explicit RAII(Environment* env) : env_(env) {
       env_->env_.push_back(Frame());
     }
     ~RAII() {
@@ -267,14 +267,13 @@ class Store {
 
   struct RAII {
     Store* store_;
-    explicit RAII(Store* store_) : store_(store_) {
+    explicit RAII(Store* store) : store_(store) {
       store_->store_.push_back(StoreFrame());
     }
     ~RAII() {
       store_->store_.pop_back();
     }
   };
-
 };
 
 PStatic HasStatic(const Static& stat, const Expr& dynamic) {
@@ -318,7 +317,7 @@ FInterpreter CPUInterpreter() {
 
 class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
                          public PatternFunctor<MatchStatus(const Pattern&, const PStatic&)> {
-
+ public:
   PStatic VisitExpr_(const ConstantNode* op, LetList* ll) final {
     return HasStatic(STensor(op->data.CopyTo(context_)), ll->Push(GetRef<Expr>(op)));
   }
