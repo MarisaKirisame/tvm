@@ -42,7 +42,7 @@
  * to generate efficient dynamic for that function.
  *
  * 3: The generated code reuses bindings (although they are not shadowed),
- * so we has to dedup them.
+ * so we have to deduplicate them.
  *
  * Also, It will also generate lots of dead code,
  * so it is a good idea to feed it through the dead code eliminator after partial evaluation.
