@@ -26,17 +26,18 @@
  * and a dynamic fragment that is semantically equivalent to the original term,
  * so the unknown part will be computed at runtime, using the dynamic fragment.
  *
- * 1: The interpreter get paired with a LetList, which preserves ANF for the generated code.
+ * 1: The interpreter holds a LetList, which preserves A Normal Form for the generated code.
  * More specifically, we require that all dynamic is an atom.
  * This avoids code duplication (which is both inefficient and incorrect), as atom has constant size
  * and allow us to not handle capture-avoidance substitution (as atom has no binder).
  *
- * 2: The store get reified.
+ * 2: The map of References to partially static values is Reified, as described below.
  * Instead of Reference having mutable field, Reference only has an unique identifier.
  * There will be a mutable mapping of id to partially static value, called the store.
  * This allow us to rollback the store:
- * when a path may or may not get executed, we copy the store, recurse with a copy,
- * and when we are done, we continue with the old store, so those effect 'do not happened'.
+ * when a path may or may not be executed (as in a conditional), we copy the store,
+ * recursively Reify with the copy, and reinstate the original when the call returns
+ * so that that the effects of the computation are not preserved.
  * We do this in if else, pattern matching, and in function,
  * as, when we see a function, we partially evaluate it with all the argument as dynamic,
  * to generate efficient dynamic for that function.
@@ -57,7 +58,6 @@
  * to make sure PE does not infinite loop.
  * Additionally, we might add a termination analysis pass that lift this requirement
  * for function that analysis found terminating.
- * A binding time analysis might also be nice.
  *
  * 2: Every time an unknown effect happened, we clear the whole store.
  * It is too conservative: if a local reference is created (and do not get passed outside),
@@ -70,6 +70,9 @@
  * Right now it is all or nothing: either a complete match, or the original dynamic code.
  * Instead, we can get a match tree, pair it with the data and evaluate it to a normal form.
  * We then can reify the result.
+ *
+ * 5: Every time a function is called, it's code will get expanded and partially evaluated.
+ * We can do a binding time analysis to cache the result and avoid re-partial evaluation.
  *
  * These assumptions do not affect the correctness of the algorithm, however.
  */
@@ -181,7 +184,7 @@ class Environment {
 
   template<typename T>
   T Extend(const std::function<T()>& cont) {
-    RAII raii(this);
+    FrameContext fc(this);
     return cont();
   }
 
@@ -204,12 +207,12 @@ class Environment {
  private:
   std::list<Frame> env_;
 
-  struct RAII {
+  struct FrameContext {
     Environment* env_;
-    explicit RAII(Environment* env) : env_(env) {
+    explicit FrameContext(Environment* env) : env_(env) {
       env_->env_.push_back(Frame());
     }
-    ~RAII() {
+    ~FrameContext() {
       env_->env_.pop_back();
     }
   };
@@ -234,7 +237,7 @@ class Store {
 
   template<typename T>
   T Extend(const std::function<T()>& cont) {
-    RAII raii(this);
+    StoreFrameContext sfc(this);
     return cont();
   }
 
@@ -265,12 +268,12 @@ class Store {
  private:
   std::list<StoreFrame> store_;
 
-  struct RAII {
+  struct StoreFrameContext {
     Store* store_;
-    explicit RAII(Store* store) : store_(store) {
+    explicit StoreFrameContext(Store* store) : store_(store) {
       store_->store_.push_back(StoreFrame());
     }
-    ~RAII() {
+    ~StoreFrameContext() {
       store_->store_.pop_back();
     }
   };
@@ -428,41 +431,40 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
     if (op->IsPrimitive()) {
       return HasStatic(SClos(ConstEvaluateClos(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
-    } else {
-      Clos f = [=](const std::vector<PStatic>& pv,
-                   const Attrs& attrs,
-                   const tvm::Array<Type>& type_args,
-                   LetList* ll) {
-        return env_.Extend<PStatic>([&]() {
-            CHECK_EQ(pv.size(), op->params.size());
-            for (size_t i = 0; i < pv.size(); ++i) {
-              env_.Insert(op->params[i], pv[i]);
-            }
-            tvm::Map<TypeVar, Type> subst;
-            for (size_t i = 0; i < type_args.size(); ++i) {
-              subst.Set(op->type_params[i], type_args[i]);
-            }
-            for (size_t i = type_args.size(); i < op->type_params.size(); ++i) {
-              subst.Set(op->type_params[i], Type());
-            }
-            return VisitExpr(TypeSubst(op->body, subst), ll);
-          });
-      };
-      Expr dyn = store_.Extend<Expr>([&]() {
-          return FunctionNode::make(op->params, LetList::With([&](LetList* ll) {
-                std::vector<PStatic> pv;
-                for (const auto& v : op->params) {
-                  pv.push_back(NoStatic(v));
-                }
-                tvm::Array<Type> type_args;
-                for (const auto& tp : op->type_params) {
-                  type_args.push_back(tp);
-                }
-                return f(pv, Attrs(), type_args, ll)->dynamic;
-              }), op->ret_type, op->type_params, op->attrs);
-        });
-      return HasStatic(SClos(f), dyn);
     }
+    Clos f = [=](const std::vector<PStatic>& pv,
+                 const Attrs& attrs,
+                 const tvm::Array<Type>& type_args,
+                 LetList* ll) {
+      return env_.Extend<PStatic>([&]() {
+          CHECK_EQ(pv.size(), op->params.size());
+          for (size_t i = 0; i < pv.size(); ++i) {
+            env_.Insert(op->params[i], pv[i]);
+          }
+          tvm::Map<TypeVar, Type> subst;
+          for (size_t i = 0; i < type_args.size(); ++i) {
+            subst.Set(op->type_params[i], type_args[i]);
+          }
+          for (size_t i = type_args.size(); i < op->type_params.size(); ++i) {
+            subst.Set(op->type_params[i], Type());
+          }
+          return VisitExpr(TypeSubst(op->body, subst), ll);
+        });
+    };
+    Expr dyn = store_.Extend<Expr>([&]() {
+        return FunctionNode::make(op->params, LetList::With([&](LetList* ll) {
+              std::vector<PStatic> pv;
+              for (const auto& v : op->params) {
+                pv.push_back(NoStatic(v));
+              }
+              tvm::Array<Type> type_args;
+              for (const auto& tp : op->type_params) {
+                type_args.push_back(tp);
+              }
+              return f(pv, Attrs(), type_args, ll)->dynamic;
+            }), op->ret_type, op->type_params, op->attrs);
+      });
+    return HasStatic(SClos(f), dyn);
   }
 
   Expr Reflect(const PStatic& st) {
@@ -475,7 +477,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       }
       return TupleNode::make(fields);
     } else {
-      LOG(ERROR) << "Unknown case";
+      LOG(FATAL) << "Unknown case";
       throw;
     }
   }
@@ -493,7 +495,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       }
       return HasStatic(STuple(fields), ll->Push(TupleNode::make(fields_dyn)));
     } else {
-      LOG(ERROR) << "Unknown case";
+      LOG(FATAL) << "Unknown case";
       throw;
     }
   }
@@ -516,18 +518,18 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
         ns_args.push_back(ps->dynamic);
       }
       PStatic ns = NoStatic(CallNode::make(expr, ns_args, attrs, type_args));
-      if (!StatefulOp(expr)) {
-        tvm::Array<Expr> args;
-        for (const PStatic& ps : pv) {
-          if (ps->pstatic) {
-            args.push_back(Reflect(ps));
-          } else {
-            return ns;
-          }
-        }
-        return ConstEvaluate(CallNode::make(expr, args, attrs, type_args), ll);
+      if (StatefulOp(expr)) {
+        return ns;
       }
-      return ns;
+      tvm::Array<Expr> args;
+      for (const PStatic& ps : pv) {
+        if (ps->pstatic) {
+          args.push_back(Reflect(ps));
+        } else {
+          return ns;
+        }
+      }
+      return ConstEvaluate(CallNode::make(expr, args, attrs, type_args), ll);
     };
   }
 
@@ -600,12 +602,9 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
           case MatchStatus::Match:
             continue;
           case MatchStatus::NoMatch:
-            current_match_status = MatchStatus::NoMatch;
-            continue;
+            return MatchStatus::NoMatch;
           case MatchStatus::Unknown:
-            if (current_match_status == MatchStatus::Match) {
-              current_match_status = MatchStatus::Unknown;
-            }
+            current_match_status = MatchStatus::Unknown;
           }
         }
         return current_match_status;
