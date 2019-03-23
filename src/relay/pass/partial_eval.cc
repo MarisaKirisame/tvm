@@ -423,7 +423,6 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   }
 
   PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
-    // TODO(@M.K.): TypeSubst is removed. Implement it.
     if (op->IsPrimitive()) {
       return HasStatic(SClos(ConstEvaluateClos(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
     } else {
