@@ -71,7 +71,7 @@
  * Instead, we can get a match tree, pair it with the data and evaluate it to a normal form.
  * We then can reify the result.
  *
- * Luckily, this issues do not effect the correctness of the algorithm.
+ * These assumptions do not affect the correctness of the algorithm, however.
  */
 #include <tvm/relay/pass.h>
 #include <tvm/relay/expr_functor.h>
