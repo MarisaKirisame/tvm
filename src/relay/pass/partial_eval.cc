@@ -47,7 +47,7 @@
  * Also, It will also generate lots of dead code,
  * so it is a good idea to feed it through the dead code eliminator after partial evaluation.
  *
- * There are some rooms for obvious improvement.
+ * The partial evaluator makes several assumptions, so there is room for improvement:
  *
  * 0: The partial evaluator treat global variable as opaque.
  * Doing PartialEval on a module level will solve this.
