@@ -41,7 +41,7 @@
  * as, when we see a function, we partially evaluate it with all the argument as dynamic,
  * to generate efficient dynamic for that function.
  *
- * 3: The code generated will reuse binding (although they are not shadowed),
+ * 3: The generated code reuses bindings (although they are not shadowed),
  * so we has to dedup them.
  *
  * Also, It will also generate lots of dead code,
