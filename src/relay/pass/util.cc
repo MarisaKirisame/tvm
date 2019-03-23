@@ -385,7 +385,7 @@ Type TypeSubst(const Type& type, const tvm::Map<TypeVar, Type>& subst_map) {
 Expr TypeSubst(const Expr& expr, const tvm::Map<TypeVar, Type>& subst_map) {
   struct TypeSubstMutator : ExprMutator {
     const tvm::Map<TypeVar, Type>& subst_map;
-    TypeSubstMutator(const tvm::Map<TypeVar, Type>& subst_map) : subst_map(subst_map) { }
+    explicit TypeSubstMutator(const tvm::Map<TypeVar, Type>& subst_map) : subst_map(subst_map) { }
     Type VisitType(const Type& t) final {
       return TypeSubst(t, subst_map);
     }
