@@ -28,7 +28,7 @@
  *
  * 1: The interpreter get paired with a LetList, which preserves ANF for the generated code.
  * More specifically, we require that all dynamic is an atom.
- * This avoid code duplication (which is both inefficient and incorrect) as atom has constant size,
+ * This avoids code duplication (which is both inefficient and incorrect), as atom has constant size
  * and allow us to not handle capture-avoidance substitution (as atom has no binder).
  *
  * 2: The store get reified.
