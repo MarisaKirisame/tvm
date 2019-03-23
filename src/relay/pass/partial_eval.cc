@@ -71,7 +71,7 @@
  * Instead, we can get a match tree, pair it with the data and evaluate it to a normal form.
  * We then can reify the result.
  *
- * Luckily, this three issues do not effect the correctness of the algorithm.
+ * Luckily, this issues do not effect the correctness of the algorithm.
  */
 #include <tvm/relay/pass.h>
 #include <tvm/relay/expr_functor.h>
@@ -175,19 +175,9 @@ struct Frame {
   Frame() = default;
 };
 
-struct Environment {
-  std::list<Frame> env;
-  Environment() : env({Frame()}) { }
-
-  struct RAII {
-    Environment* env;
-    explicit RAII(Environment* env) : env(env) {
-      env->env.push_back(Frame());
-    }
-    ~RAII() {
-      env->env.pop_back();
-    }
-  };
+class Environment {
+ public:
+  Environment() : env_({Frame()}) { }
 
   template<typename T>
   T Extend(const std::function<T()>& cont) {
@@ -196,13 +186,13 @@ struct Environment {
   }
 
   void Insert(const Var& v, const PStatic& ps) {
-    env.back().locals[v] = ps;
+    env_.back().locals[v] = ps;
   }
 
   // return null if not found
   PStatic Lookup(const Var& v) {
-    auto rit = env.rbegin();
-    while (rit != env.rend()) {
+    auto rit = env_.rbegin();
+    while (rit != env_.rend()) {
       if (rit->locals.find(v) != rit->locals.end()) {
         return rit->locals.find(v)->second;
       }
@@ -210,6 +200,19 @@ struct Environment {
     }
     return PStatic();
   }
+
+ private:
+  std::list<Frame> env_;
+
+  struct RAII {
+    Environment* env_;
+    explicit RAII(Environment* env_) : env_(env_) {
+      env_->env_.push_back(Frame());
+    }
+    ~RAII() {
+      env_->env_.pop_back();
+    }
+  };
 };
 
 /*!
@@ -225,19 +228,9 @@ struct StoreFrame {
   StoreFrame() = default;
 };
 
-struct Store {
-  std::list<StoreFrame> store;
-  Store() : store({StoreFrame()}) { }
-
-  struct RAII {
-    Store* store;
-    explicit RAII(Store* store) : store(store) {
-      store->store.push_back(StoreFrame());
-    }
-    ~RAII() {
-      store->store.pop_back();
-    }
-  };
+class Store {
+ public:
+  Store() : store_({StoreFrame()}) { }
 
   template<typename T>
   T Extend(const std::function<T()>& cont) {
@@ -246,17 +239,13 @@ struct Store {
   }
 
   void Insert(SRefNode* r, const PStatic& ps) {
-    store.back().store[r] = ps;
-  }
-
-  void Invalidate() {
-    store.back().history_valid = false;
+    store_.back().store[r] = ps;
   }
 
   // return null if not found
   PStatic Lookup(SRefNode* r) {
-    auto rit = store.rbegin();
-    while (rit != store.rend()) {
+    auto rit = store_.rbegin();
+    while (rit != store_.rend()) {
       if (rit->store.find(r) != rit->store.end()) {
         return rit->store.find(r)->second;
       }
@@ -268,6 +257,24 @@ struct Store {
     }
     return PStatic();
   }
+
+  void Invalidate() {
+    store_.back().history_valid = false;
+  }
+
+ private:
+  std::list<StoreFrame> store_;
+
+  struct RAII {
+    Store* store_;
+    explicit RAII(Store* store_) : store_(store_) {
+      store_->store_.push_back(StoreFrame());
+    }
+    ~RAII() {
+      store_->store_.pop_back();
+    }
+  };
+
 };
 
 PStatic HasStatic(const Static& stat, const Expr& dynamic) {
@@ -309,14 +316,11 @@ FInterpreter CPUInterpreter() {
   return CreateInterpreter(Module(nullptr), ctx, target);
 }
 
-struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
-                          PatternFunctor<MatchStatus(const Pattern&, const PStatic&)> {
-  Environment env;
-  Store store;
-  DLContext context;
-  FInterpreter executor = CPUInterpreter();
+class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
+                         public PatternFunctor<MatchStatus(const Pattern&, const PStatic&)> {
+
   PStatic VisitExpr_(const ConstantNode* op, LetList* ll) final {
-    return HasStatic(STensor(op->data.CopyTo(context)), ll->Push(GetRef<Expr>(op)));
+    return HasStatic(STensor(op->data.CopyTo(context_)), ll->Push(GetRef<Expr>(op)));
   }
 
   PStatic VisitExpr_(const TupleNode* op, LetList* ll) final {
@@ -340,7 +344,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   }
 
   PStatic VisitExpr_(const VarNode* op, LetList* ll) final {
-    PStatic ret = env.Lookup(GetRef<Var>(op));
+    PStatic ret = env_.Lookup(GetRef<Var>(op));
     CHECK(ret);
     return ret;
   }
@@ -350,7 +354,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   }
 
   PStatic VisitExpr_(const LetNode* op, LetList* ll) final {
-    env.Insert(op->var, VisitExpr(op->value, ll));
+    env_.Insert(op->var, VisitExpr(op->value, ll));
     return VisitExpr(op->body, ll);
   }
 
@@ -369,9 +373,9 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
         return VisitExpr(op->false_branch, ll);
       }
     } else {
-      Expr t = store.Extend<Expr>([&](){ return VisitExpr(op->true_branch, ll)->dynamic; });
-      Expr f = store.Extend<Expr>([&](){ return VisitExpr(op->false_branch, ll)->dynamic; });
-      store.Invalidate();
+      Expr t = store_.Extend<Expr>([&](){ return VisitExpr(op->true_branch, ll)->dynamic; });
+      Expr f = store_.Extend<Expr>([&](){ return VisitExpr(op->false_branch, ll)->dynamic; });
+      store_.Invalidate();
       return NoStatic(ll->Push(IfNode::make(c->dynamic, t, f)));
     }
   }
@@ -379,7 +383,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   PStatic VisitExpr_(const RefCreateNode* op, LetList* ll) final {
     PStatic ps = VisitExpr(op->value, ll);
     Static r = SRef();
-    store.Insert(&r->get<SRefNode>(), ps);
+    store_.Insert(&r->get<SRefNode>(), ps);
     return HasStatic(r, RefCreateNode::make(ps->dynamic));
   }
 
@@ -387,9 +391,9 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
     PStatic r = VisitExpr(op->ref, ll);
     PStatic v = VisitExpr(op->value, ll);
     if (r->pstatic) {
-      store.Insert(&r->pstatic->get<SRefNode>(), v);
+      store_.Insert(&r->pstatic->get<SRefNode>(), v);
     } else {
-      store.Invalidate();
+      store_.Invalidate();
     }
     return HasStatic(STuple({}), RefWriteNode::make(r->dynamic, v->dynamic));
   }
@@ -397,7 +401,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   PStatic VisitExpr_(const RefReadNode* op, LetList* ll) final {
     PStatic r = VisitExpr(op->ref, ll);
     if (r->pstatic) {
-      PStatic ret = store.Lookup(&r->pstatic->get<SRefNode>());
+      PStatic ret = store_.Lookup(&r->pstatic->get<SRefNode>());
       if (ret) {
         return ret;
       }
@@ -417,7 +421,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
     if (f->pstatic) {
       return f->pstatic->get<SClosNode>().func(x, op->attrs, op->type_args, ll);
     } else {
-      store.Invalidate();
+      store_.Invalidate();
       return NoStatic(CallNode::make(f->dynamic, x_dyn, op->attrs, op->type_args));
     }
   }
@@ -430,10 +434,10 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
                    const Attrs& attrs,
                    const tvm::Array<Type>& type_args,
                    LetList* ll) {
-        return env.Extend<PStatic>([&]() {
+        return env_.Extend<PStatic>([&]() {
             CHECK_EQ(pv.size(), op->params.size());
             for (size_t i = 0; i < pv.size(); ++i) {
-              env.Insert(op->params[i], pv[i]);
+              env_.Insert(op->params[i], pv[i]);
             }
             tvm::Map<TypeVar, Type> subst;
             for (size_t i = 0; i < type_args.size(); ++i) {
@@ -445,7 +449,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
             return VisitExpr(TypeSubst(op->body, subst), ll);
           });
       };
-      Expr dyn = store.Extend<Expr>([&]() {
+      Expr dyn = store_.Extend<Expr>([&]() {
           return FunctionNode::make(op->params, LetList::With([&](LetList* ll) {
                 std::vector<PStatic> pv;
                 for (const auto& v : op->params) {
@@ -500,7 +504,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
     Expr infered = InferType(expr, Module(nullptr));
     Expr fused = FuseOps(expr, 0);
     Expr fused_infered = InferType(expr, Module(nullptr));
-    return Reify(executor(fused_infered), ll);
+    return Reify(executor_(fused_infered), ll);
   }
 
   Clos ConstEvaluateClos(const Expr& expr, LetList* ll) {
@@ -549,7 +553,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
 
   PStatic VisitExpr_(const MatchNode* op, LetList* ll) final {
     PStatic ps = VisitExpr(op->data, ll);
-    return env.Extend<PStatic>([&]() {
+    return env_.Extend<PStatic>([&]() {
         for (const Clause& c : op->clauses) {
           switch (VisitPattern(c->lhs, ps)) {
           case MatchStatus::Match:
@@ -560,11 +564,11 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
             tvm::Array<Clause> clauses;
             for (const Clause& c : op->clauses) {
               clauses.push_back(ClauseNode::make(c->lhs,
-                                                 store.Extend<Expr>([&]() {
+                                                 store_.Extend<Expr>([&]() {
                                                      return VisitExpr(c->rhs, ll)->dynamic;
                                                    })));
             }
-            store.Invalidate();
+            store_.Invalidate();
             return NoStatic(MatchNode::make(ps->dynamic, clauses));
           }
         }
@@ -578,7 +582,7 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   }
 
   MatchStatus VisitPattern_(const PatternVarNode* op, const PStatic& ps) final {
-    env.Insert(op->var, ps);
+    env_.Insert(op->var, ps);
     return MatchStatus::Match;
   }
 
@@ -612,6 +616,12 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
       return MatchStatus::Unknown;
     }
   }
+
+ private:
+  Environment env_;
+  Store store_;
+  DLContext context_;
+  FInterpreter executor_ = CPUInterpreter();
 };
 
 Var DeDupVar(const Var& v) {
@@ -623,18 +633,17 @@ TypeVar DeDupTypeVar(const TypeVar& tv) {
 }
 
 Expr DeDup(const Expr& e) {
-  struct DeDupMutator : ExprMutator, PatternMutator {
-    std::unordered_map<Var, Var, NodeHash, NodeEqual> rename;
-
+  class DeDupMutator : public ExprMutator, public PatternMutator {
+   public:
     Var Fresh(const Var& v) {
       Var ret = DeDupVar(v);
-      rename[v] = ret;
+      rename_[v] = ret;
       return ret;
     }
 
     Expr VisitExpr_(const VarNode* op) final {
       Var v = GetRef<Var>(op);
-      return rename.count(v) != 0 ? rename.at(v) : v;
+      return rename_.count(v) != 0 ? rename_.at(v) : v;
     }
 
     Expr VisitExpr_(const LetNode* op) final {
@@ -660,6 +669,9 @@ Expr DeDup(const Expr& e) {
     Var VisitVar(const Var& v) final {
       return Fresh(v);
     }
+
+   private:
+    std::unordered_map<Var, Var, NodeHash, NodeEqual> rename_;
   };
   return DeDupMutator().VisitExpr(e);
 }
