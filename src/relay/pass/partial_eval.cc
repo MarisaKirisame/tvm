@@ -49,7 +49,7 @@
  *
  * The partial evaluator makes several assumptions, so there is room for improvement:
  *
- * 0: The partial evaluator treat global variable as opaque.
+ * 0: The partial evaluator treats global variables as opaque.
  * Doing PartialEval on a module level will solve this.
  *
  * 1: The partial evaluator assume all functions as terminating.
