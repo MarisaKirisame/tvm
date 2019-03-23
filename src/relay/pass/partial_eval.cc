@@ -44,7 +44,8 @@
  * 3: The code generated will reuse binding (although they are not shadowed),
  * so we has to dedup them.
  *
- * 4: It will also generate lots of dead code, so we will feed it through the dead code eliminator.
+ * Also, It will also generate lots of dead code,
+ * so it is a good idea to feed it through the dead code eliminator after partial evaluation.
  *
  * There are some rooms for obvious improvement.
  *
@@ -614,8 +615,54 @@ struct PartialEvaluator : ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
   }
 };
 
+Var DeDupVar(const Var& v) {
+  return VarNode::make(v->name_hint(), v->type_annotation);
+}
+
+TypeVar DeDupTypeVar(const TypeVar& tv) {
+  return TypeVarNode::make(tv->var->name_hint, tv->kind);
+}
+
 Expr DeDup(const Expr& e) {
-  return e;
+  struct DeDupMutator : ExprMutator, PatternMutator {
+    std::unordered_map<Var, Var, NodeHash, NodeEqual> rename;
+
+    Var Fresh(const Var& v) {
+      Var ret = DeDupVar(v);
+      rename[v] = ret;
+      return ret;
+    }
+
+    Expr VisitExpr_(const VarNode* op) final {
+      Var v = GetRef<Var>(op);
+      return rename.count(v) != 0 ? rename.at(v) : v;
+    }
+
+    Expr VisitExpr_(const LetNode* op) final {
+      return LetNode::make(Fresh(op->var), VisitExpr(op->value), VisitExpr(op->body));
+    }
+
+    Expr VisitExpr_(const FunctionNode* op) final {
+      tvm::Array<Var> params;
+      for (const Var& param : op->params) {
+        params.push_back(Fresh(param));
+      }
+      return FunctionNode::make(params,
+                                VisitExpr(op->body),
+                                op->ret_type,
+                                op->type_params,
+                                op->attrs);
+    }
+
+    Pattern VisitPattern(const Pattern& p) final {
+      return PatternMutator::VisitPattern(p);
+    }
+
+    Var VisitVar(const Var& v) final {
+      return Fresh(v);
+    }
+  };
+  return DeDupMutator().VisitExpr(e);
 }
 
 Expr PartialEval(const Expr& e) {
@@ -627,14 +674,14 @@ Expr PartialEval(const Expr& e) {
     tvm::Array<Var> params;
     tvm::Array<Expr> params_expr;
     for (const Var& v : op->params) {
-      Var fresh_v = VarNode::make(v->name_hint(), v->type_annotation);
+      Var fresh_v = DeDupVar(v);
       params.push_back(fresh_v);
       params_expr.push_back(fresh_v);
     }
     tvm::Array<TypeVar> type_params;
     tvm::Array<Type> type_params_type;
     for (const TypeVar& tv : op->type_params) {
-      TypeVar fresh_tv = TypeVarNode::make(tv->var->name_hint, tv->kind);
+      TypeVar fresh_tv = DeDupTypeVar(tv);
       type_params.push_back(fresh_tv);
       type_params_type.push_back(fresh_tv);
     }
