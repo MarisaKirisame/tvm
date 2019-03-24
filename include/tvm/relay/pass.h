@@ -413,18 +413,27 @@ TVM_DLL tvm::Array<TypeVar> AllTypeVars(const Type& t, const Module& mod);
 
 /*! \brief Remove expressions which does not effect the program result.
  *
- * It will remove let bindings which are not referenced, and branches that will
- * not be entered.
+ * It will remove let bindings which are not referenced,
+ * and inline let bindings that are only used one.
  *
- * For example, this pass should turn `let a = 1 in 2` into `2`, as the value of
- * the expression does not depend on a. Another example is `if (true) then 1
- * else 2` will be optimized into 1.
+ * For example, this pass should turn `let a = 1 in 2` into `2`,
+ * as the value of the expression does not depend on a.
+ *
+ * As another example, `let a = 1 in a` will be optimized into 1.
  *
  * \param e the expression to optimize.
  *
  * \return the optimized expression.
  */
 TVM_DLL Expr DeadCodeElimination(const Expr& e);
+
+/*! \brief Remove let binding that is used for at most once, and inline them.
+ *
+ * \param e the expression to optimize.
+ *
+ * \return the optimized expression.
+ */
+ TVM_DLL Expr InlineLet(const Expr& e);
 
 /*!
  * \brief Fold constant expressions.

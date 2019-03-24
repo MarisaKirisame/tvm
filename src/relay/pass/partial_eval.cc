@@ -510,8 +510,8 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   // Constant evaluate a expression.
   PStatic ConstEvaluate(const Expr& expr, LetList* ll) {
     Expr infered = InferType(expr, Module(nullptr));
-    Expr fused = FuseOps(expr, 0);
-    Expr fused_infered = InferType(expr, Module(nullptr));
+    Expr fused = FuseOps(infered, 0);
+    Expr fused_infered = InferType(fused, Module(nullptr));
     return Reify(executor_(fused_infered), ll);
   }
 

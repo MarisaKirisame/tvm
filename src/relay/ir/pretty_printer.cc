@@ -411,13 +411,13 @@ class PrettyPrinter :
       Doc doc;
       doc << prefix;
       if (fn->type_params.size() > 0) {
-        doc << "[";
+        doc << "<";
         std::vector<Doc> type_params;
         for (const TypeVar& tv : fn->type_params) {
           type_params.push_back(AllocTypeVar(tv));
         }
         doc << PrintVec(type_params);
-        doc << "]";
+        doc << ">";
       }
       doc << "(";
       std::vector<Doc> params;
