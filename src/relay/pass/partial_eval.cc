@@ -321,6 +321,12 @@ FInterpreter CPUInterpreter() {
 class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
                          public PatternFunctor<MatchStatus(const Pattern&, const PStatic&)> {
  public:
+  PartialEvaluator(const tvm::Array<Var>& free_vars) {
+    for (const Var& v : free_vars) {
+      env_.Insert(v, NoStatic(v));
+    }
+  }
+
   PStatic VisitExpr_(const ConstantNode* op, LetList* ll) final {
     return HasStatic(STensor(op->data.CopyTo(context_)), ll->Push(GetRef<Expr>(op)));
   }
@@ -675,33 +681,12 @@ Expr DeDup(const Expr& e) {
 }
 
 Expr PartialEval(const Expr& e) {
-  PartialEvaluator pe;
-  Expr res = LetList::With([&](LetList* ll) {
-      return DeDup(pe.VisitExpr(e, ll)->dynamic);
-    });
-  if (const FunctionNode* op = e.as<FunctionNode>()) {
-    tvm::Array<Var> params;
-    tvm::Array<Expr> params_expr;
-    for (const Var& v : op->params) {
-      Var fresh_v = DeDupVar(v);
-      params.push_back(fresh_v);
-      params_expr.push_back(fresh_v);
-    }
-    tvm::Array<TypeVar> type_params;
-    tvm::Array<Type> type_params_type;
-    for (const TypeVar& tv : op->type_params) {
-      TypeVar fresh_tv = DeDupTypeVar(tv);
-      type_params.push_back(fresh_tv);
-      type_params_type.push_back(fresh_tv);
-    }
-    return FunctionNode::make(params,
-                              CallNode::make(res, params_expr, Attrs(), type_params_type),
-                              Type(),
-                              type_params,
-                              op->attrs);
-  } else {
-    return res;
-  }
+  return TransformF([&](const Expr& e) {
+      return LetList::With([&](LetList* ll) {
+          PartialEvaluator pe(FreeVars(e));
+          return DeDup(pe.VisitExpr(e, ll)->dynamic);
+        });
+    }, e);
 }
 
 TVM_REGISTER_API("relay._ir_pass.partial_eval")

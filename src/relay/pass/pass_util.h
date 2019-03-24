@@ -65,6 +65,20 @@ Type TypeSubst(const Type& type, const tvm::Map<TypeVar, Type>& subst_map);
  */
 Expr TypeSubst(const Expr& expr, const tvm::Map<TypeVar, Type>& subst_map);
 
+/*!
+ * \brief Make arbitrary transformation preserve the out most function.
+ * \param func The transformation.
+ * \param e The expression
+ * \return the transformed expression. If e is a function the return is also a function.
+ */
+inline Expr TransformF(const std::function<Expr(const Expr&)>& func, const Expr& e) {
+  if (const FunctionNode* f = e.as<FunctionNode>()) {
+    return FunctionNode::make(f->params, func(f->body), f->ret_type, f->type_params, f->attrs);
+  } else {
+    return func(e);
+  }
+}
+
 }  // namespace relay
 }  // namespace tvm
 #endif  // TVM_RELAY_PASS_PASS_UTIL_H_
