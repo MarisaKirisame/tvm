@@ -306,16 +306,20 @@ bool StatefulOp(const Expr& e) {
 
 using FInterpreter = runtime::TypedPackedFunc<Value(Expr)>;
 
-FInterpreter CPUInterpreter() {
+DLContext CPUContext() {
   DLContext ctx;
   ctx.device_type = kDLCPU;
   ctx.device_id = 0;
+  return ctx;
+}
+
+FInterpreter CPUInterpreter() {
   Target target = Target::create("llvm");
   // use a fresh build context
   // in case we are already in a build context.
   BuildConfigContext fresh_build_ctx(build_config());
 
-  return CreateInterpreter(Module(nullptr), ctx, target);
+  return CreateInterpreter(Module(nullptr), CPUContext(), target);
 }
 
 class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
@@ -369,10 +373,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   PStatic VisitExpr_(const IfNode* op, LetList* ll) final {
     PStatic c = VisitExpr(op->cond, ll);
     if (c->pstatic) {
-      DLContext cpu_ctx;
-      cpu_ctx.device_type = kDLCPU;
-      cpu_ctx.device_id = 0;
-      NDArray cpu_array = c->pstatic->get<STensorNode>().data.CopyTo(cpu_ctx);
+      NDArray cpu_array = c->pstatic->get<STensorNode>().data.CopyTo(CPUContext());
       CHECK_EQ(TVMType2Type(cpu_array->dtype), Bool());
       // TODO(@jroesch, @MK): Refactor code into helper from DCE.
       if (reinterpret_cast<uint8_t*>(cpu_array->data)[0]) {
@@ -624,7 +625,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
  private:
   Environment env_;
   Store store_;
-  DLContext context_;
+  DLContext context_ = CPUContext();
   FInterpreter executor_ = CPUInterpreter();
 };
 
