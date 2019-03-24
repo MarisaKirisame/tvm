@@ -427,14 +427,6 @@ TVM_DLL tvm::Array<TypeVar> AllTypeVars(const Type& t, const Module& mod);
  */
 TVM_DLL Expr DeadCodeElimination(const Expr& e);
 
-/*! \brief Remove let binding that is used for at most once, and inline them.
- *
- * \param e the expression to optimize.
- *
- * \return the optimized expression.
- */
- TVM_DLL Expr InlineLet(const Expr& e);
-
 /*!
  * \brief Fold constant expressions.
  * \param expr the expression to be optimized.
