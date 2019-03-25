@@ -406,7 +406,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
     PStatic ps = VisitExpr(op->value, ll);
     Static r = SRef();
     store_.Insert(&r->get<SRefNode>(), ps);
-    return HasStatic(r, RefCreateNode::make(ps->dynamic));
+    return HasStatic(r, ll->Push(RefCreateNode::make(ps->dynamic)));
   }
 
   PStatic VisitExpr_(const RefWriteNode* op, LetList* ll) final {
@@ -417,7 +417,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
     } else {
       store_.Invalidate();
     }
-    return HasStatic(STuple({}), RefWriteNode::make(r->dynamic, v->dynamic));
+    return HasStatic(STuple({}), ll->Push(RefWriteNode::make(r->dynamic, v->dynamic)));
   }
 
   PStatic VisitExpr_(const RefReadNode* op, LetList* ll) final {
@@ -428,7 +428,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
         return ret;
       }
     }
-    return NoStatic(RefReadNode::make(r->dynamic));
+    return NoStatic(ll->Push(RefReadNode::make(r->dynamic)));
   }
 
   PStatic VisitExpr_(const CallNode* op, LetList* ll) final {
@@ -444,7 +444,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       return f->pstatic->get<SClosNode>().func(x, op->attrs, op->type_args, ll);
     } else {
       store_.Invalidate();
-      return NoStatic(CallNode::make(f->dynamic, x_dyn, op->attrs, op->type_args));
+      return NoStatic(ll->Push(CallNode::make(f->dynamic, x_dyn, op->attrs, op->type_args)));
     }
   }
 
@@ -492,7 +492,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
               return f(pv, Attrs(), type_args, ll)->dynamic;
             }), func->ret_type, func->type_params, func->attrs);
       });
-    return HasStatic(SClos(f), dyn);
+    return HasStatic(SClos(f), ll->Push(dyn));
   }
 
   Expr Reflect(const PStatic& st) {
@@ -598,7 +598,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
                                                    })));
             }
             store_.Invalidate();
-            return NoStatic(MatchNode::make(ps->dynamic, clauses));
+            return NoStatic(ll->Push(MatchNode::make(ps->dynamic, clauses)));
           }
         }
         LOG(FATAL) << "No case Match";
