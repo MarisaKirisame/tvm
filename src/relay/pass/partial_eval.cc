@@ -45,6 +45,10 @@
  * 3: The generated code reuses bindings (although they are not shadowed),
  * so we have to deduplicate them.
  *
+ * 4: The generated code might map a VarNode into multiple VarNode.
+ * While this is permitted (Var is compared by internal Id equality, not pointer equality),
+ * all our pass still use pointer equality, so we restore it by remapping it for now.
+ *
  * Also, It will also generate lots of dead code,
  * so it is a good idea to feed it through the dead code eliminator after partial evaluation.
  *
@@ -165,6 +169,17 @@ struct PStaticNode {
   explicit PStaticNode(const Expr& dynamic) : PStaticNode(Static(), dynamic) { }
 };
 
+struct VarHash {
+  size_t operator()(const Var& v) const {
+    return v->vid.hash();
+  }
+};
+
+struct VarEqual {
+  bool operator()(const Var& l, const Var& r) const {
+    return l->vid.get() == r->vid.get();
+  }
+};
 /*!
  * \brief A stack frame in the Relay interpreter.
  *
@@ -172,15 +187,14 @@ struct PStaticNode {
  */
 struct Frame {
   /*! \brief The set of local variables and arguments for the frame. */
-  std::unordered_map<Var, PStatic, NodeHash, NodeEqual> locals;
-  explicit Frame(const std::unordered_map<Var, PStatic, NodeHash, NodeEqual>& locals) :
-    locals(locals) { }
+  std::unordered_map<Var, PStatic, VarHash, VarEqual> locals;
   Frame() = default;
 };
 
 class Environment {
  public:
   Environment() : env_({Frame()}) { }
+  Environment(const Environment&) = delete;
 
   template<typename T>
   T Extend(const std::function<T()>& cont) {
@@ -189,10 +203,10 @@ class Environment {
   }
 
   void Insert(const Var& v, const PStatic& ps) {
+    CHECK(ps);
     env_.back().locals[v] = ps;
   }
 
-  // return null if not found
   PStatic Lookup(const Var& v) {
     auto rit = env_.rbegin();
     while (rit != env_.rend()) {
@@ -201,7 +215,8 @@ class Environment {
       }
       ++rit;
     }
-    return PStatic();
+    LOG(FATAL) << "Unknown Variable";
+    throw;
   }
 
  private:
@@ -234,6 +249,7 @@ struct StoreFrame {
 class Store {
  public:
   Store() : store_({StoreFrame()}) { }
+  Store(const Store&) = delete;
 
   template<typename T>
   T Extend(const std::function<T()>& cont) {
@@ -356,9 +372,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const VarNode* op, LetList* ll) final {
-    PStatic ret = env_.Lookup(GetRef<Var>(op));
-    CHECK(ret);
-    return ret;
+    return env_.Lookup(GetRef<Var>(op));
   }
 
   PStatic VisitExpr_(const GlobalVarNode* op, LetList* ll) final {
@@ -375,7 +389,6 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
     if (c->pstatic) {
       NDArray cpu_array = c->pstatic->get<STensorNode>().data.CopyTo(CPUContext());
       CHECK_EQ(TVMType2Type(cpu_array->dtype), Bool());
-      // TODO(@jroesch, @MK): Refactor code into helper from DCE.
       if (reinterpret_cast<uint8_t*>(cpu_array->data)[0]) {
         return VisitExpr(op->true_branch, ll);
       } else {
@@ -436,40 +449,48 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
-    if (op->IsPrimitive()) {
-      return HasStatic(SClos(ConstEvaluateClos(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
+    Function func = GetRef<Function>(op);
+    if (func->IsPrimitive()) {
+      return HasStatic(SClos(ConstEvaluateClos(func, ll)), func);
+    }
+    std::vector<std::pair<Var, PStatic> > free_vars;
+    for (const auto& v : FreeVars(GetRef<Expr>(op))) {
+      free_vars.push_back(std::pair<Var, PStatic>(v, env_.Lookup(v)));
     }
     Clos f = [=](const std::vector<PStatic>& pv,
                  const Attrs& attrs,
                  const tvm::Array<Type>& type_args,
                  LetList* ll) {
       return env_.Extend<PStatic>([&]() {
-          CHECK_EQ(pv.size(), op->params.size());
+          CHECK_EQ(pv.size(), func->params.size());
           for (size_t i = 0; i < pv.size(); ++i) {
-            env_.Insert(op->params[i], pv[i]);
+            env_.Insert(func->params[i], pv[i]);
+          }
+          for (const auto& p : free_vars) {
+            env_.Insert(p.first, p.second);
           }
           tvm::Map<TypeVar, Type> subst;
           for (size_t i = 0; i < type_args.size(); ++i) {
-            subst.Set(op->type_params[i], type_args[i]);
+            subst.Set(func->type_params[i], type_args[i]);
           }
-          for (size_t i = type_args.size(); i < op->type_params.size(); ++i) {
-            subst.Set(op->type_params[i], Type());
+          for (size_t i = type_args.size(); i < func->type_params.size(); ++i) {
+            subst.Set(func->type_params[i], Type());
           }
-          return VisitExpr(TypeSubst(op->body, subst), ll);
+          return VisitExpr(TypeSubst(func->body, subst), ll);
         });
     };
     Expr dyn = store_.Extend<Expr>([&]() {
-        return FunctionNode::make(op->params, LetList::With([&](LetList* ll) {
+        return FunctionNode::make(func->params, LetList::With([&](LetList* ll) {
               std::vector<PStatic> pv;
-              for (const auto& v : op->params) {
+              for (const auto& v : func->params) {
                 pv.push_back(NoStatic(v));
               }
               tvm::Array<Type> type_args;
-              for (const auto& tp : op->type_params) {
+              for (const auto& tp : func->type_params) {
                 type_args.push_back(tp);
               }
               return f(pv, Attrs(), type_args, ll)->dynamic;
-            }), op->ret_type, op->type_params, op->attrs);
+            }), func->ret_type, func->type_params, func->attrs);
       });
     return HasStatic(SClos(f), dyn);
   }
@@ -545,11 +566,11 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const ConstructorNode* op, LetList* ll) final {
+    Constructor c = GetRef<Constructor>(op);
     Clos f = [=](const std::vector<PStatic>& pv,
                  const Attrs& attrs,
                  const tvm::Array<Type>& type_args,
                  LetList* ll) {
-      Constructor c = GetRef<Constructor>(op);
       tvm::Array<Expr> dyn;
       for (const PStatic& ps : pv) {
         dyn.push_back(ps->dynamic);
@@ -580,7 +601,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
             return NoStatic(MatchNode::make(ps->dynamic, clauses));
           }
         }
-        LOG(ERROR) << "No case Match";
+        LOG(FATAL) << "No case Match";
         throw;
       });
   }
