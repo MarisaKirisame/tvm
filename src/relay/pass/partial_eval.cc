@@ -14,7 +14,7 @@
  * In the extreme case, partial evaluation can even turn the whole program
  * into pure first order computation with no control.
  * In such a case, we can compile the whole computation onto SIMD Instruction/GPU/FPGA,
- * and get insane speedup.
+ * and get huge speedup.
  *
  * It works by making the following modifications to the standard relay interpreter:
  *
@@ -31,12 +31,12 @@
  * This avoids code duplication (which is both inefficient and incorrect), as atom has constant size
  * and allow us to not handle capture-avoidance substitution (as atom has no binder).
  *
- * 2: The map of References to partially static values is Reified, as described below.
+ * 2: The map of References to partially static values is reified, as described below.
  * Instead of Reference having mutable field, Reference only has an unique identifier.
  * There will be a mutable mapping of id to partially static value, called the store.
  * This allow us to rollback the store:
  * when a path may or may not be executed (as in a conditional), we copy the store,
- * recursively Reify with the copy, and reinstate the original when the call returns
+ * recurse with the copy, and reinstate the original when the call returns
  * so that that the effects of the computation are not preserved.
  * We do this in if else, pattern matching, and in function,
  * as, when we see a function, we partially evaluate it with all the argument as dynamic,

@@ -166,12 +166,20 @@ class VarNode : public ExprNode {
 
 RELAY_DEFINE_NODE_REF(Var, VarNode, Expr);
 
+/*! \brief Hash Var by it's id.
+ * Different VarNode might has same vid, and they are considered to be the same var in such case.
+ * Use VarHash to hash Var by id.
+ */
 struct VarHash {
   size_t operator()(const Var& v) const {
     return v->vid.hash();
   }
 };
 
+/*! \brief Compare Var by it's id.
+ * Different VarNode might has same vid, and they are considered to be the same var in such case.
+ * Use VarEqual to compare Var by id.
+ */
 struct VarEqual {
   bool operator()(const Var& l, const Var& r) const {
     return l->vid.get() == r->vid.get();
