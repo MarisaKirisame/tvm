@@ -45,6 +45,11 @@
  * 3: The generated code reuses bindings (although they are not shadowed),
  * so we have to deduplicate them.
  *
+ * 4: In the generated code, multiple VarNode might have same Id.
+ * While it is permitted, most pass use NodeHash for Var,
+ * and having multiple VarNode for same Id break them.
+ * Thus we remap them to a single Id for now.
+ *
  * Also, It will also generate lots of dead code,
  * so it is a good idea to feed it through the dead code eliminator after partial evaluation.
  *
@@ -701,11 +706,31 @@ Expr DeDup(const Expr& e) {
   return DeDupMutator().VisitExpr(e);
 }
 
+Expr Remap(const Expr& e) {
+  class RemapMutator : public ExprMutator, public PatternMutator {
+    Expr VisitExpr_(const VarNode* op) final {
+      Var v = GetRef<Var>(op);
+      if (remap_.count(v) == 0) {
+        remap_.insert({v, v});
+      }
+      return remap_.at(v);
+    }
+
+    Var VisitVar(const Var& v) final {
+      return Downcast<Var>(VisitExpr(v));
+    }
+
+   private:
+    std::unordered_map<Var, Var, VarHash, VarEqual> remap_;
+  };
+  return RemapMutator().VisitExpr(e);
+}
+
 Expr PartialEval(const Expr& e) {
   return TransformF([&](const Expr& e) {
       return LetList::With([&](LetList* ll) {
           PartialEvaluator pe(FreeVars(e));
-          return DeDup(pe.VisitExpr(e, ll)->dynamic);
+          return Remap(DeDup(pe.VisitExpr(e, ll)->dynamic));
         });
     }, e);
 }
