@@ -93,43 +93,59 @@ namespace relay {
 
 using namespace runtime;
 
-struct StaticNode {
-  virtual ~StaticNode() { }
-  template <typename T>
-  T& get() {
-    auto ret = dynamic_cast<T*>(this);
-    CHECK(ret) << "cannot downcast";
-    return *ret;
-  }
-  template <typename T>
-  T* try_get() {
-    auto ret = dynamic_cast<T*>(this);
-    return ret;
-  }
+/*! \brief The base container type of Relay values. */
+class StaticNode : public RelayNode {
+ public:
+  static constexpr const char* _type_key = "relay.Value";
+  TVM_DECLARE_BASE_NODE_INFO(ValueNode, RelayNode);
 };
 
-using Static = std::shared_ptr<StaticNode>;
 
-struct PStaticNode;
+class Static : public NodeRef {
+ public:
+  Static() {}
+  explicit Static(NodePtr<Node> n) : NodeRef(n) {}
+  const ValueNode* operator->() const {
+    return static_cast<const ValueNode*>(node_.get());
+  }
 
-using PStatic = std::shared_ptr<PStaticNode>;
+  using ContainerType = StaticNode;
+};
+
+
+struct PStaticNode : Node {
+  Static pstatic;  // may be null
+  Expr dynamic;
+  PStaticNode(const Static& pstatic, const Expr& dynamic) : pstatic(pstatic), dynamic(dynamic) { }
+  explicit PStaticNode(const Expr& dynamic) : PStaticNode(Static(), dynamic) { }
+  TVM_DECLARE_NODE_TYPE_INFO(PStaticNode, Node);
+};
+
+RELAY_DEFINE_NODE_REF(PStatic, PStaticNode, NodeRef);
+
 
 struct STupleNode : StaticNode {
   std::vector<PStatic> fields;
   explicit STupleNode(const std::vector<PStatic>& fields) : fields(fields) { }
+  TVM_DECLARE_NODE_TYPE_INFO(STupleNode, StaticNode);
 };
 
-Static STuple(const std::vector<PStatic>& fields) {
-  return std::make_shared<STupleNode>(fields);
+RELAY_DEFINE_NODE_REF(STuple, STupleNode, Value);
+
+Static MkSTuple(const std::vector<PStatic>& fields) {
+  return Static(make_node<STupleNode>(fields));
 }
 
 struct STensorNode : StaticNode {
   runtime::NDArray data;
   explicit STensorNode(const NDArray& data) : data(data) { }
+  TVM_DECLARE_NODE_TYPE_INFO(STupleNode, StaticNode);
 };
 
-Static STensor(const NDArray& data) {
-  return std::make_shared<STensorNode>(data);
+RELAY_DEFINE_NODE_REF(STensor, STensorNode, Value);
+
+Static MkSTensor(const NDArray& data) {
+  return Static(make_node<STensorNode>(data));
 }
 
 struct SConstructorNode : StaticNode {
@@ -137,16 +153,24 @@ struct SConstructorNode : StaticNode {
   std::vector<PStatic> fields;
   SConstructorNode(const Constructor& constructor, const std::vector<PStatic>& fields) :
     constructor(constructor), fields(fields) { }
+  TVM_DECLARE_NODE_TYPE_INFO(SConstructorNode, StaticNode);
 };
 
-Static SConstructor(const Constructor& constructor, const std::vector<PStatic>& fields) {
-  return std::make_shared<SConstructorNode>(constructor, fields);
+RELAY_DEFINE_NODE_REF(SConstructor, SConstructorNode, Value);
+
+Static MkSConstructor(const Constructor& constructor, const std::vector<PStatic>& fields) {
+  return Static(make_node<SConstructorNode>(constructor, fields));
 }
 
-struct SRefNode : StaticNode { };  // we will use the pointer as the guid for hashing
+struct SRefNode : StaticNode {
+  // we will use the address as the guid for hashing
+  TVM_DECLARE_NODE_TYPE_INFO(SRefNode, StaticNode);
+};
 
-Static SRef() {
-  return std::make_shared<SRefNode>();
+RELAY_DEFINE_NODE_REF(SRef, SRefNode, Value);
+
+Static MkSRef() {
+  return Static(make_node<SRefNode>());
 }
 
 using Clos = std::function<PStatic(const std::vector<PStatic>&,
@@ -157,18 +181,14 @@ using Clos = std::function<PStatic(const std::vector<PStatic>&,
 struct SClosNode : StaticNode {
   Clos func;
   explicit SClosNode(const Clos& func) : func(func) { }
+  TVM_DECLARE_NODE_TYPE_INFO(SClosNode, StaticNode);
 };
 
-Static SClos(const Clos& func) {
-  return std::make_shared<SClosNode>(func);
+RELAY_DEFINE_NODE_REF(SClos, SClosNode, Value);
+
+Static MkSClos(const Clos& func) {
+  return Static(make_node<SClosNode>(func));
 }
-
-struct PStaticNode {
-  Static pstatic;  // may be null
-  Expr dynamic;
-  PStaticNode(const Static& pstatic, const Expr& dynamic) : pstatic(pstatic), dynamic(dynamic) { }
-  explicit PStaticNode(const Expr& dynamic) : PStaticNode(Static(), dynamic) { }
-};
 
 /*!
  * \brief A stack frame in the Relay interpreter.
@@ -193,7 +213,7 @@ class Environment {
   }
 
   void Insert(const Var& v, const PStatic& ps) {
-    CHECK(ps);
+    CHECK(ps.defined());
     env_.back().locals[v] = ps;
   }
 
@@ -229,10 +249,10 @@ class Environment {
  * every time we roll back, a frame is popped.
  */
 struct StoreFrame {
-  std::unordered_map<SRefNode*, PStatic> store;
+  std::unordered_map<const SRefNode*, PStatic> store;
   /*! \brief on unknown effect, history_valid is set to true to signal above frame is outdated */
   bool history_valid = true;
-  explicit StoreFrame(const std::unordered_map<SRefNode*, PStatic>& store) : store(store) { }
+  explicit StoreFrame(const std::unordered_map<const SRefNode*, PStatic>& store) : store(store) { }
   StoreFrame() = default;
 };
 
@@ -247,12 +267,12 @@ class Store {
     return cont();
   }
 
-  void Insert(SRefNode* r, const PStatic& ps) {
+  void Insert(const SRefNode* r, const PStatic& ps) {
     store_.back().store[r] = ps;
   }
 
   // return null if not found
-  PStatic Lookup(SRefNode* r) {
+  PStatic Lookup(const SRefNode* r) {
     auto rit = store_.rbegin();
     while (rit != store_.rend()) {
       if (rit->store.find(r) != rit->store.end()) {
@@ -286,11 +306,11 @@ class Store {
 };
 
 PStatic HasStatic(const Static& stat, const Expr& dynamic) {
-  return std::make_shared<PStaticNode>(stat, dynamic);
+  return PStatic(make_node<PStaticNode>(stat, dynamic));
 }
 
 PStatic NoStatic(const Expr& dynamic) {
-  return std::make_shared<PStaticNode>(dynamic);
+  return PStatic(make_node<PStaticNode>(dynamic));
 }
 
 enum struct MatchStatus {
@@ -338,7 +358,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const ConstantNode* op, LetList* ll) final {
-    return HasStatic(STensor(op->data.CopyTo(context_)), ll->Push(GetRef<Expr>(op)));
+    return HasStatic(MkSTensor(op->data.CopyTo(context_)), ll->Push(GetRef<Expr>(op)));
   }
 
   PStatic VisitExpr_(const TupleNode* op, LetList* ll) final {
@@ -349,13 +369,13 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       value.push_back(ps);
       expr.push_back(ps->dynamic);
     }
-    return HasStatic(STuple(value), ll->Push(TupleNode::make(expr)));
+    return HasStatic(MkSTuple(value), ll->Push(TupleNode::make(expr)));
   }
 
   PStatic VisitExpr_(const TupleGetItemNode* op, LetList* ll) final {
     PStatic ps = VisitExpr(op->tuple, ll);
-    if (ps->pstatic) {
-      return ps->pstatic->get<STupleNode>().fields[op->index];
+    if (ps->pstatic.defined()) {
+      return Downcast<STuple>(ps->pstatic)->fields[op->index];
     } else {
       return NoStatic(ll->Push(TupleGetItemNode::make(ps->dynamic, op->index)));
     }
@@ -376,8 +396,8 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
 
   PStatic VisitExpr_(const IfNode* op, LetList* ll) final {
     PStatic c = VisitExpr(op->cond, ll);
-    if (c->pstatic) {
-      NDArray cpu_array = c->pstatic->get<STensorNode>().data.CopyTo(CPUContext());
+    if (c->pstatic.defined()) {
+      NDArray cpu_array = Downcast<STensor>(c->pstatic)->data.CopyTo(CPUContext());
       CHECK_EQ(TVMType2Type(cpu_array->dtype), Bool());
       if (reinterpret_cast<uint8_t*>(cpu_array->data)[0]) {
         return VisitExpr(op->true_branch, ll);
@@ -402,26 +422,26 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
 
   PStatic VisitExpr_(const RefCreateNode* op, LetList* ll) final {
     PStatic ps = VisitExpr(op->value, ll);
-    Static r = SRef();
-    store_.Insert(&r->get<SRefNode>(), ps);
+    Static r = MkSRef();
+    store_.Insert(r.as<SRefNode>(), ps);
     return HasStatic(r, ll->Push(RefCreateNode::make(ps->dynamic)));
   }
 
   PStatic VisitExpr_(const RefWriteNode* op, LetList* ll) final {
     PStatic r = VisitExpr(op->ref, ll);
     PStatic v = VisitExpr(op->value, ll);
-    if (r->pstatic) {
-      store_.Insert(&r->pstatic->get<SRefNode>(), v);
+    if (r->pstatic.defined()) {
+      store_.Insert(r->pstatic.as<SRefNode>(), v);
     } else {
       store_.Invalidate();
     }
-    return HasStatic(STuple({}), ll->Push(RefWriteNode::make(r->dynamic, v->dynamic)));
+    return HasStatic(MkSTuple({}), ll->Push(RefWriteNode::make(r->dynamic, v->dynamic)));
   }
 
   PStatic VisitExpr_(const RefReadNode* op, LetList* ll) final {
     PStatic r = VisitExpr(op->ref, ll);
-    if (r->pstatic) {
-      PStatic ret = store_.Lookup(&r->pstatic->get<SRefNode>());
+    if (r->pstatic.defined()) {
+      PStatic ret = store_.Lookup(r->pstatic.as<SRefNode>());
       if (ret) {
         return ret;
       }
@@ -438,8 +458,8 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       x.push_back(ps);
       x_dyn.push_back(ps->dynamic);
     }
-    if (f->pstatic) {
-      return f->pstatic->get<SClosNode>().func(x, op->attrs, op->type_args, ll);
+    if (f->pstatic.defined()) {
+      return Downcast<SClos>(f->pstatic)->func(x, op->attrs, op->type_args, ll);
     } else {
       store_.Invalidate();
       return NoStatic(ll->Push(CallNode::make(f->dynamic, x_dyn, op->attrs, op->type_args)));
@@ -449,7 +469,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
     Function func = GetRef<Function>(op);
     if (func->IsPrimitive()) {
-      return HasStatic(SClos(ConstEvaluateClos(func, ll)), func);
+      return HasStatic(MkSClos(ConstEvaluateClos(func, ll)), func);
     }
     std::vector<std::pair<Var, PStatic> > free_vars;
     for (const auto& v : FreeVars(GetRef<Expr>(op))) {
@@ -490,13 +510,13 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
               return f(pv, Attrs(), type_args, ll)->dynamic;
             }), func->ret_type, func->type_params, func->attrs);
       });
-    return HasStatic(SClos(f), ll->Push(dyn));
+    return HasStatic(MkSClos(f), ll->Push(dyn));
   }
 
   Expr Reflect(const PStatic& st) {
-    if (const STensorNode* op = st->pstatic->try_get<STensorNode>()) {
+    if (const STensorNode* op = st->pstatic.as<STensorNode>()) {
       return ConstantNode::make(op->data);
-    } else if (const STupleNode* op = st->pstatic->try_get<STupleNode>()) {
+    } else if (const STupleNode* op = st->pstatic.as<STupleNode>()) {
       tvm::Array<Expr> fields;
       for (const PStatic& field : op->fields) {
         fields.push_back(Reflect(field));
@@ -510,7 +530,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
 
   PStatic Reify(const Value& v, LetList* ll) const {
     if (const TensorValueNode* op = v.as<TensorValueNode>()) {
-      return HasStatic(STensor(op->data), ll->Push(ConstantNode::make(op->data)));
+      return HasStatic(MkSTensor(op->data), ll->Push(ConstantNode::make(op->data)));
     } else if (const TupleValueNode* op = v.as<TupleValueNode>()) {
       std::vector<PStatic> fields;
       tvm::Array<Expr> fields_dyn;
@@ -519,7 +539,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
         fields.push_back(ps);
         fields_dyn.push_back(ps->dynamic);
       }
-      return HasStatic(STuple(fields), ll->Push(TupleNode::make(fields_dyn)));
+      return HasStatic(MkSTuple(fields), ll->Push(TupleNode::make(fields_dyn)));
     } else {
       LOG(FATAL) << "Unknown case";
       throw;
@@ -549,7 +569,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       }
       tvm::Array<Expr> args;
       for (const PStatic& ps : pv) {
-        if (ps->pstatic) {
+        if (ps->pstatic.defined()) {
           args.push_back(Reflect(ps));
         } else {
           return ns;
@@ -560,7 +580,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const OpNode* op, LetList* ll) final {
-    return HasStatic(SClos(ConstEvaluateClos(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
+    return HasStatic(MkSClos(ConstEvaluateClos(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
   }
 
   PStatic VisitExpr_(const ConstructorNode* op, LetList* ll) final {
@@ -573,9 +593,9 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       for (const PStatic& ps : pv) {
         dyn.push_back(ps->dynamic);
       }
-      return HasStatic(SConstructor(c, pv), ll->Push(CallNode::make(c, dyn)));
+      return HasStatic(MkSConstructor(c, pv), ll->Push(CallNode::make(c, dyn)));
     };
-    return HasStatic(SClos(f), GetRef<Expr>(op));
+    return HasStatic(MkSClos(f), GetRef<Expr>(op));
   }
 
   PStatic VisitExpr_(const MatchNode* op, LetList* ll) final {
@@ -616,16 +636,16 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   MatchStatus VisitPattern_(const PatternConstructorNode* op, const PStatic& ps) final {
-    if (ps->pstatic) {
-      const SConstructorNode& scn = ps->pstatic->get<SConstructorNode>();
+    if (ps->pstatic.defined()) {
+      SConstructor scn = Downcast<SConstructor>(ps->pstatic);
       CHECK_NE(op->constructor->tag, -1);
-      CHECK_NE(scn.constructor->tag, -1);
-      if (op->constructor->tag == scn.constructor->tag) {
+      CHECK_NE(scn->constructor->tag, -1);
+      if (op->constructor->tag == scn->constructor->tag) {
         // todo(M.K.): should use ptr equality but it is broken
-        CHECK_EQ(op->patterns.size(), scn.fields.size());
+        CHECK_EQ(op->patterns.size(), scn->fields.size());
         MatchStatus current_match_status = MatchStatus::Match;
         for (size_t i = 0; i < op->patterns.size(); ++i) {
-          MatchStatus ms = VisitPattern(op->patterns[i], scn.fields[i]);
+          MatchStatus ms = VisitPattern(op->patterns[i], scn->fields[i]);
           switch (ms) {
           case MatchStatus::Match:
             continue;
