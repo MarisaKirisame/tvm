@@ -45,10 +45,6 @@
  * 3: The generated code reuses bindings (although they are not shadowed),
  * so we have to deduplicate them.
  *
- * 4: The generated code might map a VarNode into multiple VarNode.
- * While this is permitted (Var is compared by internal Id equality, not pointer equality),
- * all our pass still use pointer equality, so we restore it by remapping it for now.
- *
  * Also, It will also generate lots of dead code,
  * so it is a good idea to feed it through the dead code eliminator after partial evaluation.
  *
@@ -169,17 +165,6 @@ struct PStaticNode {
   explicit PStaticNode(const Expr& dynamic) : PStaticNode(Static(), dynamic) { }
 };
 
-struct VarHash {
-  size_t operator()(const Var& v) const {
-    return v->vid.hash();
-  }
-};
-
-struct VarEqual {
-  bool operator()(const Var& l, const Var& r) const {
-    return l->vid.get() == r->vid.get();
-  }
-};
 /*!
  * \brief A stack frame in the Relay interpreter.
  *
@@ -665,6 +650,10 @@ Expr DeDup(const Expr& e) {
       Var ret = DeDupVar(v);
       rename_[v] = ret;
       return ret;
+    }
+
+    Expr VisitExpr(const Expr& e) final {
+      return ExprMutator::VisitExpr(e);
     }
 
     Expr VisitExpr_(const VarNode* op) final {

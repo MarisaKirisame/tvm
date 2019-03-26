@@ -28,8 +28,8 @@ class CalcDep : private ExprVisitor {
 
  private:
   template<typename X>
-  using VarMap = std::unordered_map<Var, X, NodeHash, NodeEqual>;
-  using VarSet = std::unordered_set<Var, NodeHash, NodeEqual>;
+  using VarMap = std::unordered_map<Var, X, VarHash, VarEqual>;
+  using VarSet = std::unordered_set<Var, VarHash, VarEqual>;
   VarMap<Expr> expr_map_;
   VarMap<size_t> use_map_;
   VarSet letrec_set_;
@@ -44,9 +44,13 @@ class CalcDep : private ExprVisitor {
   }
 
   void VisitExpr_(const LetNode* l) final {
-    expr_map_[l->var] = l->value;
-    use_map_[l->var] = 0;
-    dead_worklist_.insert(l->var);
+    if (count_) {
+      CHECK_EQ(expr_map_.count(l->var), 0);
+      CHECK_EQ(use_map_.count(l->var), 0);
+      expr_map_[l->var] = l->value;
+      use_map_[l->var] = 0;
+      dead_worklist_.insert(l->var);
+    }
     LetRec([&]() { VisitExpr(l->value); }, l->var);
     VisitExpr(l->body);
   }
@@ -57,6 +61,9 @@ class CalcDep : private ExprVisitor {
 
   void VisitExpr_(const VarNode* v) final {
     Var var = GetRef<Var>(v);
+    if (expr_map_.count(var) == 0) {
+      return;
+    }
     if (current_letrec_.count(var) == 0) {
       if (count_) {
         use_map_[var] += 1;

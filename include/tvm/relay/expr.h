@@ -166,6 +166,18 @@ class VarNode : public ExprNode {
 
 RELAY_DEFINE_NODE_REF(Var, VarNode, Expr);
 
+struct VarHash {
+  size_t operator()(const Var& v) const {
+    return v->vid.hash();
+  }
+};
+
+struct VarEqual {
+  bool operator()(const Var& l, const Var& r) const {
+    return l->vid.get() == r->vid.get();
+  }
+};
+
 /*!
  * \brief Global variable that leaves in the top-level module.
  * This is used to enable recursive calls between function.
