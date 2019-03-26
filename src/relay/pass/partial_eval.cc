@@ -380,8 +380,16 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
         return VisitExpr(op->false_branch, ll);
       }
     } else {
-      Expr t = store_.Extend<Expr>([&](){ return VisitExpr(op->true_branch, ll)->dynamic; });
-      Expr f = store_.Extend<Expr>([&](){ return VisitExpr(op->false_branch, ll)->dynamic; });
+      Expr t = store_.Extend<Expr>([&]() {
+          return LetList::With([&](LetList* ll) {
+              return VisitExpr(op->true_branch, ll)->dynamic;
+            });
+        });
+      Expr f = store_.Extend<Expr>([&]() {
+          return LetList::With([&](LetList* ll) {
+              return VisitExpr(op->false_branch, ll)->dynamic;
+            });
+        });
       store_.Invalidate();
       return NoStatic(ll->Push(IfNode::make(c->dynamic, t, f)));
     }
@@ -577,10 +585,12 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
           case MatchStatus::Unknown:
             tvm::Array<Clause> clauses;
             for (const Clause& c : op->clauses) {
-              clauses.push_back(ClauseNode::make(c->lhs,
-                                                 store_.Extend<Expr>([&]() {
-                                                     return VisitExpr(c->rhs, ll)->dynamic;
-                                                   })));
+              Expr expr = store_.Extend<Expr>([&]() {
+                  return LetList::With([&](LetList* ll) {
+                      return VisitExpr(c->rhs, ll)->dynamic;
+                    });
+                });
+              clauses.push_back(ClauseNode::make(c->lhs, expr));
             }
             store_.Invalidate();
             return NoStatic(ll->Push(MatchNode::make(ps->dynamic, clauses)));
