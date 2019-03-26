@@ -6,8 +6,10 @@ from tvm.relay.prelude import Prelude
 
 import numpy as np
 
+
 def rand(dtype='float32', *shape):
     return tvm.nd.array(np.random.rand(*shape).astype(dtype))
+
 
 def test_id():
     shape = (10, 10)
@@ -171,6 +173,7 @@ def test_pow():
     np.testing.assert_allclose(forward.asnumpy(), 8 * i_nd.asnumpy())
     np.testing.assert_allclose(grad_i.asnumpy(), 8 * np.ones_like(grad_i.asnumpy()))
 
+
 def test_ref():
     shape = (10, 10)
     dtype = 'float32'
@@ -189,6 +192,7 @@ def test_ref():
     forward, (grad_x,) = ex.evaluate(back_func)(x_nd)
     np.testing.assert_allclose(forward.asnumpy(), 2 * x_nd.asnumpy())
     np.testing.assert_allclose(grad_x.asnumpy(), 2 * np.ones_like(grad_x.asnumpy()))
+
 
 if __name__ == "__main__":
     test_id()

@@ -50,8 +50,8 @@ class CalcDep : private ExprVisitor {
       expr_map_[l->var] = l->value;
       use_map_[l->var] = 0;
       dead_worklist_.insert(l->var);
+      LetRec([&]() { VisitExpr(l->value); }, l->var);
     }
-    LetRec([&]() { VisitExpr(l->value); }, l->var);
     VisitExpr(l->body);
   }
 
@@ -69,7 +69,7 @@ class CalcDep : private ExprVisitor {
         use_map_[var] += 1;
         dead_worklist_.erase(var);
       } else {
-        CHECK_GT(use_map_[var], 0);
+        CHECK_GT(use_map_[var], 0) << var;
         use_map_[var] -= 1;
         if (use_map_[var] == 0) {
           dead_worklist_.insert(var);
@@ -104,17 +104,19 @@ class CalcDep : private ExprVisitor {
       expr_map_(expr_map), use_map_(use_map), letrec_set_(letrec_set) { }
     friend CalcDep;
 
+    bool HasLet(const Var& v) {
+      return (use_map_[v] > 1 || (use_map_[v] != 0 && letrec_set_.count(v) != 0));
+    }
+
     Expr VisitExpr_(const VarNode* op) final {
       Var v = GetRef<Var>(op);
-      return (use_map_[v] == 1 && letrec_set_.count(v) == 0 && expr_map_.count(v) > 0) ?
-        expr_map_[v] :
-        v;
+      return (expr_map_.count(v) == 0 || HasLet(v)) ? v : VisitExpr(expr_map_[v]);
     }
 
     Expr VisitExpr_(const LetNode* op) final {
       Var v = op->var;
-      if (use_map_[v] > 1 || (use_map_[v] >= 1 && letrec_set_.count(v) > 0)) {
-        return LetNode::make(op->var, VisitExpr(op->value), VisitExpr(op->body));
+      if (HasLet(v)) {
+        return LetNode::make(v, VisitExpr(op->value), VisitExpr(op->body));
       } else {
         return VisitExpr(op->body);
       }
