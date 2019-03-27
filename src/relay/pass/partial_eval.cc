@@ -37,7 +37,7 @@
  * This allow us to rollback the store:
  * when a path may or may not be executed (as in a conditional), we copy the store,
  * recurse with the copy, and reinstate the original when the call returns
- * so that that the effects of the computation are not preserved.
+ * so that the effects of the computation are not preserved.
  * We do this in if else, pattern matching, and in function,
  * as, when we see a function, we partially evaluate it with all the argument as dynamic,
  * to generate efficient dynamic for that function.
