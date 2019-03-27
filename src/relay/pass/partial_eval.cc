@@ -275,14 +275,13 @@ class Store {
   PStatic Lookup(const SRefNode* r) {
     auto rit = store_.rbegin();
     while (rit != store_.rend()) {
+      if (!rit->history_valid) {
+        return PStatic();
+      }
       if (rit->store.find(r) != rit->store.end()) {
         return rit->store.find(r)->second;
       }
-      if (rit->history_valid) {
-        ++rit;
-      } else {
-        return PStatic();
-      }
+      ++rit;
     }
     return PStatic();
   }
