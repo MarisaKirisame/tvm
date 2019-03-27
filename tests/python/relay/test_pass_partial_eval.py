@@ -80,9 +80,36 @@ def test_if_ref():
     np.testing.assert_allclose(f_res.asnumpy(), 2 * np.ones_like(f_res.asnumpy()))
     np.testing.assert_allclose(pe_f_res.asnumpy(), 2 * np.ones_like(pe_f_res.asnumpy()))
 
+
+def test_function_invalidate():
+    shape = ()
+    dtype = 'bool'
+    t = relay.TensorType(shape, dtype)
+    d = relay.Var("d", t)
+    r = relay.Var("r")
+    fetch = relay.Function([], relay.RefRead(r))
+    fet = relay.Var("fetch")
+    fet_obscured = relay.Var("fetch_obscured")
+    u = relay.Var("u")
+    body = relay.If(d, fet_obscured(), fet_obscured())
+    body = relay.Let(u, relay.RefWrite(r, relay.const(1)), body)
+    body = relay.Let(fet_obscured, relay.If(d, fet, fet), body)
+    body = relay.Let(fet, fetch, body)
+    body = relay.Let(r, relay.RefCreate(relay.const(0)), body)
+    f = relay.Function([d], body)
+    f = infer_type(f)
+    pe_f = infer_type(partial_eval(f))
+    ex = create_executor()
+    f_res = ex.evaluate(f)(relay.const(True))
+    pe_f_res = ex.evaluate(pe_f)(relay.const(True))
+    np.testing.assert_allclose(f_res.asnumpy(), np.ones_like(f_res.asnumpy()))
+    np.testing.assert_allclose(pe_f_res.asnumpy(), np.ones_like(pe_f_res.asnumpy()))
+
+
 if __name__ == '__main__':
     test_tuple()
     test_const_inline()
     test_ref()
     test_ad()
     test_if_ref()
+    test_function_invalidate()

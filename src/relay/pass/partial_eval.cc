@@ -497,6 +497,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
         });
     };
     Expr dyn = store_.Extend<Expr>([&]() {
+        store_.Invalidate();
         return FunctionNode::make(func->params, LetList::With([&](LetList* ll) {
               std::vector<PStatic> pv;
               for (const auto& v : func->params) {
