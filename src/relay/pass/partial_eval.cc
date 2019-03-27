@@ -207,9 +207,9 @@ class Environment {
   Environment(const Environment&) = delete;
 
   template<typename T>
-  T Extend(const std::function<T()>& cont) {
+  T Extend(const std::function<T()>& body) {
     FrameContext fc(this);
-    return cont();
+    return body();
   }
 
   void Insert(const Var& v, const PStatic& ps) {
@@ -262,9 +262,9 @@ class Store {
   Store(const Store&) = delete;
 
   template<typename T>
-  T Extend(const std::function<T()>& cont) {
+  T Extend(const std::function<T()>& body) {
     StoreFrameContext sfc(this);
-    return cont();
+    return body();
   }
 
   void Insert(const SRefNode* r, const PStatic& ps) {
