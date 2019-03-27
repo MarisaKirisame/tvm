@@ -99,8 +99,8 @@ class CalcDep : private ExprVisitor {
     VarMap<size_t> use_map_;
     VarSet letrec_set_;
     explicit Eliminator(const VarMap<Expr>& expr_map,
-                    const VarMap<size_t>& use_map,
-                    const VarSet& letrec_set) :
+                        const VarMap<size_t>& use_map,
+                        const VarSet& letrec_set) :
       expr_map_(expr_map), use_map_(use_map), letrec_set_(letrec_set) { }
     friend CalcDep;
 

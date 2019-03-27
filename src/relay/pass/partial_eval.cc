@@ -12,7 +12,7 @@
  * might get partially evaluated away, and the subsequent optimization (for example, kernel fusion)
  * can reason across those structural code as it got removed.
  * In the extreme case, partial evaluation can even turn the whole program
- * into pure first order computation with no control.
+ * into pure first order computation with no control flow.
  * In such a case, we can compile the whole computation onto SIMD Instruction/GPU/FPGA,
  * and get huge speedup.
  *
@@ -173,21 +173,21 @@ Static MkSRef() {
   return Static(make_node<SRefNode>());
 }
 
-using Clos = std::function<PStatic(const std::vector<PStatic>&,
-                                   const Attrs&,
-                                   const Array<Type>&,
-                                   LetList*)>;
+using Func = std::function<PStatic(const std::vector<PStatic>&,
+                                      const Attrs&,
+                                      const Array<Type>&,
+                                      LetList*)>;
 
-struct SClosNode : StaticNode {
-  Clos func;
-  explicit SClosNode(const Clos& func) : func(func) { }
-  TVM_DECLARE_NODE_TYPE_INFO(SClosNode, StaticNode);
+struct SFuncNode : StaticNode {
+  Func func;
+  explicit SFuncNode(const Func& func) : func(func) { }
+  TVM_DECLARE_NODE_TYPE_INFO(SFuncNode, StaticNode);
 };
 
-RELAY_DEFINE_NODE_REF(SClos, SClosNode, Value);
+RELAY_DEFINE_NODE_REF(SFunc, SFuncNode, Value);
 
-Static MkSClos(const Clos& func) {
-  return Static(make_node<SClosNode>(func));
+Static MkSFunc(const Func& func) {
+  return Static(make_node<SFuncNode>(func));
 }
 
 /*!
@@ -459,7 +459,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       x_dyn.push_back(ps->dynamic);
     }
     if (f->pstatic.defined()) {
-      return Downcast<SClos>(f->pstatic)->func(x, op->attrs, op->type_args, ll);
+      return Downcast<SFunc>(f->pstatic)->func(x, op->attrs, op->type_args, ll);
     } else {
       store_.Invalidate();
       return NoStatic(ll->Push(CallNode::make(f->dynamic, x_dyn, op->attrs, op->type_args)));
@@ -469,13 +469,13 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
     Function func = GetRef<Function>(op);
     if (func->IsPrimitive()) {
-      return HasStatic(MkSClos(ConstEvaluateClos(func, ll)), func);
+      return HasStatic(MkSFunc(ConstEvaluateFunc(func, ll)), func);
     }
     std::vector<std::pair<Var, PStatic> > free_vars;
     for (const auto& v : FreeVars(GetRef<Expr>(op))) {
       free_vars.push_back(std::pair<Var, PStatic>(v, env_.Lookup(v)));
     }
-    Clos f = [=](const std::vector<PStatic>& pv,
+    Func f = [=](const std::vector<PStatic>& pv,
                  const Attrs& attrs,
                  const tvm::Array<Type>& type_args,
                  LetList* ll) {
@@ -510,7 +510,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
               return f(pv, Attrs(), type_args, ll)->dynamic;
             }), func->ret_type, func->type_params, func->attrs);
       });
-    return HasStatic(MkSClos(f), ll->Push(dyn));
+    return HasStatic(MkSFunc(f), ll->Push(dyn));
   }
 
   Expr Reflect(const PStatic& st) {
@@ -554,11 +554,11 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
     return Reify(executor_(fused_infered), ll);
   }
 
-  Clos ConstEvaluateClos(const Expr& expr, LetList* ll) {
+  Func ConstEvaluateFunc(const Expr& expr, LetList* ll) {
     return [=](const std::vector<PStatic>& pv,
-                 const Attrs& attrs,
-                 const tvm::Array<Type>& type_args,
-                 LetList* ll) {
+               const Attrs& attrs,
+               const tvm::Array<Type>& type_args,
+               LetList* ll) {
       tvm::Array<Expr> ns_args;
       for (const PStatic& ps : pv) {
         ns_args.push_back(ps->dynamic);
@@ -580,12 +580,12 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const OpNode* op, LetList* ll) final {
-    return HasStatic(MkSClos(ConstEvaluateClos(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
+    return HasStatic(MkSFunc(ConstEvaluateFunc(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
   }
 
   PStatic VisitExpr_(const ConstructorNode* op, LetList* ll) final {
     Constructor c = GetRef<Constructor>(op);
-    Clos f = [=](const std::vector<PStatic>& pv,
+    Func f = [=](const std::vector<PStatic>& pv,
                  const Attrs& attrs,
                  const tvm::Array<Type>& type_args,
                  LetList* ll) {
@@ -595,7 +595,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       }
       return HasStatic(MkSConstructor(c, pv), ll->Push(CallNode::make(c, dyn)));
     };
-    return HasStatic(MkSClos(f), GetRef<Expr>(op));
+    return HasStatic(MkSFunc(f), GetRef<Expr>(op));
   }
 
   PStatic VisitExpr_(const MatchNode* op, LetList* ll) final {
@@ -678,6 +678,7 @@ TypeVar DeDupTypeVar(const TypeVar& tv) {
   return TypeVarNode::make(tv->var->name_hint, tv->kind);
 }
 
+/*! \brief Use a fresh Id for every Var to make the result well-formed. */
 Expr DeDup(const Expr& e) {
   class DeDupMutator : public ExprMutator, public PatternMutator {
    public:
@@ -726,6 +727,7 @@ Expr DeDup(const Expr& e) {
   return DeDupMutator().VisitExpr(e);
 }
 
+/*! \brief Remap multiple Var sharing the same Id into the same Var. */
 Expr Remap(const Expr& e) {
   class RemapMutator : public ExprMutator, public PatternMutator {
     Expr VisitExpr_(const VarNode* op) final {

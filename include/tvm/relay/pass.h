@@ -414,7 +414,7 @@ TVM_DLL tvm::Array<TypeVar> AllTypeVars(const Type& t, const Module& mod);
 /*! \brief Remove expressions which does not effect the program result.
  *
  * It will remove let bindings which are not referenced,
- * and inline let bindings that are only used one.
+ * and inline let bindings that are only used once.
  *
  * For example, this pass should turn `let a = 1 in 2` into `2`,
  * as the value of the expression does not depend on a.
