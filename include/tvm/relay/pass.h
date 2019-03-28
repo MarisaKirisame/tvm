@@ -335,7 +335,7 @@ TVM_DLL tvm::Array<Var> BoundVars(const Expr& expr);
  *
  * \return List of bound vars, in the PostDFS order in the expression.
  */
- TVM_DLL tvm::Array<Var> BoundVars(const Pattern& pat);
+TVM_DLL tvm::Array<Var> BoundVars(const Pattern& pat);
 
 /*! \brief Get free type parameters from expression expr.
  *
