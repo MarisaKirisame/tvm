@@ -48,7 +48,7 @@ def test_ref():
 
 def test_ad():
     shape = (10, 10)
-    dtype = 'float32'
+    dtype = "float32"
     t = relay.TensorType(shape, dtype)
     d = relay.Var("d", t)
     f = relay.Function([d], d * d)
@@ -62,7 +62,7 @@ def test_ad():
 
 def test_if_ref():
     shape = ()
-    dtype = 'bool'
+    dtype = "bool"
     t = relay.TensorType(shape, dtype)
     d = relay.Var("d", t)
     r = relay.Var("r")
@@ -83,7 +83,7 @@ def test_if_ref():
 
 def test_function_invalidate():
     shape = ()
-    dtype = 'bool'
+    dtype = "bool"
     t = relay.TensorType(shape, dtype)
     d = relay.Var("d", t)
     r = relay.Var("r")
@@ -106,6 +106,29 @@ def test_function_invalidate():
     np.testing.assert_allclose(pe_f_res.asnumpy(), np.ones_like(pe_f_res.asnumpy()))
 
 
+def test_head_cons():
+    mod = relay.Module()
+    p = Prelude(mod)
+    def hd_impl():
+        a = relay.TypeVar("a")
+        x = relay.Var("x", p.l(a))
+        y = relay.Var("y")
+        z = relay.Var("z")
+        cons_case = relay.Clause(relay.PatternConstructor(p.cons,
+                                                          [relay.PatternVar(y),
+                                                           relay.PatternVar(z)]),
+                                 y)
+        return relay.Function([x], relay.Match(x, [cons_case]), a, [a])
+    t = relay.TypeVar("t")
+    x = relay.Var("x", t)
+    hd = relay.Var("hd")
+    body = relay.Let(hd, hd_impl(), hd(p.cons(x, p.nil())))
+    f = relay.Function([x], body, None, [t])
+    f = infer_type(f, mod=mod)
+    res = dcpe(f)
+    assert alpha_equal(res, relay.Function([x], x, t, [t]))
+
+
 if __name__ == '__main__':
     test_tuple()
     test_const_inline()
@@ -113,3 +136,4 @@ if __name__ == '__main__':
     test_ad()
     test_if_ref()
     test_function_invalidate()
+    test_head_cons()

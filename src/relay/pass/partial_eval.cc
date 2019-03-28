@@ -225,7 +225,7 @@ class Environment {
       }
       ++rit;
     }
-    LOG(FATAL) << "Unknown Variable";
+    LOG(FATAL) << "Unknown Variable: " << v;
     throw;
   }
 
@@ -612,6 +612,9 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
             for (const Clause& c : op->clauses) {
               Expr expr = store_.Extend<Expr>([&]() {
                   return LetList::With([&](LetList* ll) {
+                      for (const Var& v : BoundVars(c->lhs)) {
+                        env_.Insert(v, NoStatic(v));
+                      }
                       return VisitExpr(c->rhs, ll)->dynamic;
                     });
                 });

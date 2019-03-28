@@ -46,7 +46,7 @@
 #include <tvm/relay/module.h>
 #include <tvm/relay/op_attr_types.h>
 #include <tvm/relay/type.h>
-
+#include <tvm/relay/adt.h>
 #include <string>
 #include <vector>
 
@@ -325,6 +325,17 @@ TVM_DLL bool WellFormed(const Expr& expr);
  * \return List of bound vars, in the PostDFS order in the expression.
  */
 TVM_DLL tvm::Array<Var> BoundVars(const Expr& expr);
+
+/*! \brief Get all bound variables from pattern pat.
+ *
+ * Bound variables are all variables that got bound by the pat.
+ * They only have meaning inside that expr, and can only be used in it.
+ *
+ * \param pat the Pattern.
+ *
+ * \return List of bound vars, in the PostDFS order in the expression.
+ */
+ TVM_DLL tvm::Array<Var> BoundVars(const Pattern& pat);
 
 /*! \brief Get free type parameters from expression expr.
  *
