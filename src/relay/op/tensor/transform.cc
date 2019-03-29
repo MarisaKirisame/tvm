@@ -710,9 +710,19 @@ bool TakeRel(const Array<Type>& types,
   // `types` contains: [data, indices, result]
   CHECK_EQ(types.size(), 3);
   const auto* data = types[0].as<TensorTypeNode>();
-  CHECK(data != nullptr);
+  if (data == nullptr) {
+    CHECK(types[0].as<IncompleteTypeNode>())
+      << "must be tensor type or incomplete type";
+    return false;
+  }
+
   const auto* indices = types[1].as<TensorTypeNode>();
-  CHECK(indices != nullptr);
+  if (indices == nullptr) {
+    CHECK(types[1].as<IncompleteTypeNode>())
+      << "must be tensor type or incomplete type";
+    return true;
+  }
+
   const auto param = attrs.as<TakeAttrs>();
   CHECK(param != nullptr);
 

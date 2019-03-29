@@ -29,12 +29,13 @@ def _mx_fully_connected(inputs, attrs):
         # no flatten attribute in old mxnet
         has_flatten = False
     use_flatten = attrs.get_bool("flatten", True)
+    assert use_flatten == False
     if has_flatten and use_flatten:
         inputs[0] = _op.nn.batch_flatten(inputs[0])
     res = _op.nn.dense(inputs[0], inputs[1], units=units)
     if use_bias:
         assert len(inputs) == 3
-        res = _op.nn.bias_add(res, inputs[2])
+        res = _op.nn.bias_add(res, inputs[2], axis=-1)
     return res
 
 
@@ -192,6 +193,26 @@ def _mx_batch_norm(inputs, attrs):
     new_attrs["scale"] = not attrs.get_bool("fix_gamma", False)
     return _op.nn.batch_norm(*inputs, **new_attrs)
 
+def _mx_layer_norm(inputs, attrs):
+    # TODO: implement layer norm
+    return inputs[0]
+
+def _mx_div_sqrt_dim(inputs, attrs):
+    assert len(inputs) == 1
+    data = inputs[0]
+    shape = _op.shape_of(data)
+    last_dim_index = _op.subtract(_op.sum(_op.ones_like(shape)), _expr.const(1))
+    last_dim = _op.take(_op.shape_of(data), indices=last_dim_index)
+    return _op.divide(data,
+        _op.sqrt(last_dim.astype('float32')))
+
+def _mx_erf(inputs, attrs):
+    # TODO: implement erf
+    return inputs[0]
+
+def _mx_sequence_mask(inputs, attrs):
+    # TODO: implement seq mask
+    return inputs[0]
 
 def _mx_slice(inputs, attrs):
     new_attrs = {}
@@ -413,7 +434,7 @@ def _mx_batch_dot(inputs, attrs):
         raise tvm.error.OpAttributeInvalid(msg.format(transpose_a))
     if transpose_b is False:
         b = _op.transpose(b, axes=[0, 2, 1])
-    return _op.batch_matmul(a, b)
+    return _op.nn.batch_matmul(a, b)
 
 
 def _mx_arange(inputs, attrs):
@@ -422,10 +443,19 @@ def _mx_arange(inputs, attrs):
         raise tvm.error.OpAttributeUnimplemented(
             'Attribute "repeat" is not supported in operator arange.')
     new_attrs = {}
-    new_attrs["start"] = attrs.get_float("start", 0)
-    new_attrs["stop"] = attrs.get_float("stop")
-    new_attrs["step"] = attrs.get_float("step", 1)
-    new_attrs["dtype"] = attrs.get_str("dtype", "float32")
+    stop = attrs.attrs.get('stop')
+    # This op has special behavior when only start is passed.
+    if stop != 'None':
+        new_attrs["start"] = attrs.get_float("start", 0)
+        new_attrs["stop"] = attrs.get_float("stop")
+        new_attrs["step"] = attrs.get_float("step", 1)
+        new_attrs["dtype"] = attrs.get_str("dtype", "float32")
+    else:
+        new_attrs["start"] = 0
+        new_attrs["stop"] = attrs.get_float("start")
+        new_attrs["step"] = attrs.get_float("step", 1)
+        new_attrs["dtype"] = attrs.get_str("dtype", "float32")
+
     return _op.arange(**new_attrs)
 
 
@@ -774,6 +804,10 @@ _convert_map = {
     # "broadcast_to",
     # "gather_nd",
     # "Crop"          : _crop_like,
+    "LayerNorm": _mx_layer_norm,
+    "_contrib_div_sqrt_dim": _mx_div_sqrt_dim,
+    "erf": _mx_erf,
+    "SequenceMask": _mx_sequence_mask,
 }
 
 # set identity list
@@ -812,6 +846,9 @@ def _from_mxnet_impl(symbol, shape_dict, dtype_info):
         attrs = StrAttrsDict(node.get("attrs", {}))
         node_name = node["name"]
         op_name = node["op"]
+
+
+
         if op_name == "null":
             shape = shape_dict[node_name] if node_name in shape_dict else None
             if isinstance(dtype_info, dict):
@@ -828,6 +865,10 @@ def _from_mxnet_impl(symbol, shape_dict, dtype_info):
             else:
                 raise RuntimeError("unexpected type %s" % type(res))
             node_map[nid] = res
+
+            # if op_name == 'FullyConnected':
+            #     outputs = res
+            #     break
         else:
             raise tvm.error.OpNotImplemented(
                 'Operator {} is not supported in frontend MXNet.'.format(op_name))
@@ -859,7 +900,6 @@ def _update_shape_dtype(shape, dtype, params):
 def from_mxnet(symbol,
                shape=None,
                dtype="float32",
-               aux_params=None,
                input_symbols=None,
                arg_params=None,
                aux_params=None):
@@ -911,14 +951,14 @@ def from_mxnet(symbol,
         params = {}
         for k, v in symbol.collect_params().items():
             params[k] = _nd.array(v.data().asnumpy())
-         data = mx.sym.Variable("data")
-        sym = symbol(data)
+
         if input_symbols is not None:
             inputs = input_symbols
         else:
             inputs = []
             inputs.append(mx.sym.Variable("data"))
-        sym = symbol(*inputs))
+        sym = symbol(*inputs)
+
         if isinstance(sym, (list, tuple)):
             sym = mx.sym.Group(sym)
         shape, dtype = _update_shape_dtype(shape, dtype, params)
