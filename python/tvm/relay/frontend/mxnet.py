@@ -839,6 +839,8 @@ def _update_shape_dtype(shape, dtype, params):
 def from_mxnet(symbol,
                shape=None,
                dtype="float32",
+               aux_params=None,
+               input_symbols=None,
                arg_params=None,
                aux_params=None):
     """Convert from MXNet"s model into compatible relay Function.
@@ -889,8 +891,14 @@ def from_mxnet(symbol,
         params = {}
         for k, v in symbol.collect_params().items():
             params[k] = _nd.array(v.data().asnumpy())
-        data = mx.sym.Variable("data")
+         data = mx.sym.Variable("data")
         sym = symbol(data)
+        if input_symbols is not None:
+            inputs = input_symbols
+        else:
+            inputs = []
+            inputs.append(mx.sym.Variable("data"))
+        sym = symbol(*inputs))
         if isinstance(sym, (list, tuple)):
             sym = mx.sym.Group(sym)
         shape, dtype = _update_shape_dtype(shape, dtype, params)
