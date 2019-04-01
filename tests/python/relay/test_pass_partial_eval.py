@@ -16,8 +16,8 @@ def check_eval(expr, expected_result, mod=None, rtol=1e-07):
     np.testing.assert_allclose(result.asnumpy(), expected_result, rtol=rtol)
 
 
-def dcpe(expr):
-    return dead_code_elimination(partial_eval(expr))
+def dcpe(expr, mod=None):
+    return dead_code_elimination(partial_eval(expr, mod=mod))
 
 
 def test_tuple():
@@ -32,7 +32,7 @@ def test_const_inline():
     d = Var("d")
     double = Function([d], d + d)
     orig = double(const(4.0))
-    assert alpha_equal(dcpe(double(const(4.0))), const(8.0))
+    assert alpha_equal(dcpe(orig), const(8.0))
 
 
 def test_ref():
@@ -137,8 +137,9 @@ def test_map():
     mod = Module()
     p = Prelude(mod)
     f = Var("f")
-    orig = p.map(p.cons(const(1), p.cons(const(2), p.cons(const(3), p.nil()))))
-    print(dcpe(orig))
+    orig = p.map(f, p.cons(const(1), p.cons(const(2), p.cons(const(3), p.nil()))))
+    expected = p.cons(f(const(1)), p.cons(f(const(2)), p.cons(f(const(3)), p.nil())))
+    assert alpha_equal(dcpe(orig, mod=mod), expected)
 
 if __name__ == '__main__':
     test_tuple()
@@ -148,4 +149,4 @@ if __name__ == '__main__':
     test_if_ref()
     test_function_invalidate()
     test_head_cons()
-    #test_map()
+    test_map()
