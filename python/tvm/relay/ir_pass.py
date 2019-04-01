@@ -939,7 +939,7 @@ def pass_debug_print(ast, show_meta_data=True, annotate=None, gnf=True):
     return _ir_pass.pass_debug_print(ast, show_meta_data, annotate, gnf)
 
 
-def partial_eval(expr):
+def partial_eval(expr, mod=None):
     """
     Evaluate the static fragment of the code.
 
@@ -948,9 +948,10 @@ def partial_eval(expr):
     expr : tvm.relay.Expr
         The input expression.
 
+    mod : Optional[tvm.relay.Module]
     Returns
     -------
     expr : tvm.relay.Expr
       The output expression.
     """
-    return _ir_pass.partial_eval(expr)
+    return _ir_pass.partial_eval(expr, mod)

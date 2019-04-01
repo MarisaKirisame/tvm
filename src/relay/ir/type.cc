@@ -94,6 +94,7 @@ TVM_STATIC_IR_FUNCTOR_REGISTER(IRPrinter, vtable)
 });
 
 TypeCall TypeCallNode::make(Type func, tvm::Array<Type> args) {
+  CHECK(func.as<GlobalTypeVarNode>());
   NodePtr<TypeCallNode> n = make_node<TypeCallNode>();
   n->func = std::move(func);
   n->args = std::move(args);

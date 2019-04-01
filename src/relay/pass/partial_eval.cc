@@ -347,13 +347,25 @@ FInterpreter CPUInterpreter() {
   return CreateInterpreter(Module(nullptr), CPUContext(), target);
 }
 
-class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>,
+bool IsAtomic(const Expr& e) {
+  return e.as<VarNode>() || e.as<OpNode>() || e.as<ConstructorNode>();
+}
+
+class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
                          public PatternFunctor<MatchStatus(const Pattern&, const PStatic&)> {
  public:
-  PartialEvaluator(const tvm::Array<Var>& free_vars) {
+  PartialEvaluator(const tvm::Array<Var>& free_vars,
+                   const Module& mod) :
+    mod_(mod) {
     for (const Var& v : free_vars) {
       env_.Insert(v, NoStatic(v));
     }
+  }
+
+  PStatic VisitExpr(const Expr& e, LetList* ll) final {
+    PStatic ret = ExprFunctor<PStatic(const Expr&, LetList*)>::VisitExpr(e, ll);
+    CHECK(IsAtomic(ret->dynamic)) << ret->dynamic;
+    return ret;
   }
 
   PStatic VisitExpr_(const ConstantNode* op, LetList* ll) final {
@@ -385,7 +397,11 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const GlobalVarNode* op, LetList* ll) final {
-    return NoStatic(GetRef<Expr>(op));
+    GlobalVar gv = GetRef<GlobalVar>(op);
+    if (map_.count(gv) == 0) {
+      map_.insert({gv, VisitFunc(mod_->Lookup(gv))});
+    }
+    return map_.at(gv);
   }
 
   PStatic VisitExpr_(const LetNode* op, LetList* ll) final {
@@ -465,13 +481,12 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
     }
   }
 
-  PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
-    Function func = GetRef<Function>(op);
+  PStatic VisitFunc(const Function& func) {
     if (func->IsPrimitive()) {
-      return HasStatic(MkSFunc(ConstEvaluateFunc(func, ll)), func);
+      return HasStatic(MkSFunc(ConstEvaluateFunc(func)), func);
     }
     std::vector<std::pair<Var, PStatic> > free_vars;
-    for (const auto& v : FreeVars(GetRef<Expr>(op))) {
+    for (const auto& v : FreeVars(func)) {
       free_vars.push_back(std::pair<Var, PStatic>(v, env_.Lookup(v)));
     }
     Func f = [=](const std::vector<PStatic>& pv,
@@ -510,7 +525,13 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
               return f(pv, Attrs(), type_args, ll)->dynamic;
             }), func->ret_type, func->type_params, func->attrs);
       });
-    return HasStatic(MkSFunc(f), ll->Push(dyn));
+    return HasStatic(MkSFunc(f), dyn);
+  }
+
+  PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
+    Function func = GetRef<Function>(op);
+    PStatic res = VisitFunc(func);
+    return PStatic(make_node<PStaticNode>(res->pstatic, ll->Push(res->dynamic)));
   }
 
   Expr Reflect(const PStatic& st) {
@@ -554,7 +575,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
     return Reify(executor_(fused_infered), ll);
   }
 
-  Func ConstEvaluateFunc(const Expr& expr, LetList* ll) {
+  Func ConstEvaluateFunc(const Expr& expr) {
     return [=](const std::vector<PStatic>& pv,
                const Attrs& attrs,
                const tvm::Array<Type>& type_args,
@@ -563,7 +584,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
       for (const PStatic& ps : pv) {
         ns_args.push_back(ps->dynamic);
       }
-      PStatic ns = NoStatic(CallNode::make(expr, ns_args, attrs, type_args));
+      PStatic ns = NoStatic(ll->Push(CallNode::make(expr, ns_args, attrs, type_args)));
       if (StatefulOp(expr)) {
         return ns;
       }
@@ -580,7 +601,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
   }
 
   PStatic VisitExpr_(const OpNode* op, LetList* ll) final {
-    return HasStatic(MkSFunc(ConstEvaluateFunc(GetRef<Expr>(op), ll)), GetRef<Expr>(op));
+    return HasStatic(MkSFunc(ConstEvaluateFunc(GetRef<Expr>(op))), GetRef<Expr>(op));
   }
 
   PStatic VisitExpr_(const ConstructorNode* op, LetList* ll) final {
@@ -668,6 +689,8 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
 
  private:
   Environment env_;
+  Module mod_;
+  std::unordered_map<GlobalVar, PStatic, NodeHash, NodeEqual> map_;
   Store store_;
   DLContext context_ = CPUContext();
   FInterpreter executor_ = CPUInterpreter();
@@ -751,10 +774,10 @@ Expr Remap(const Expr& e) {
   return RemapMutator().VisitExpr(e);
 }
 
-Expr PartialEval(const Expr& e) {
+Expr PartialEval(const Expr& e, const Module& m) {
   return TransformF([&](const Expr& e) {
       return LetList::With([&](LetList* ll) {
-          PartialEvaluator pe(FreeVars(e));
+          PartialEvaluator pe(FreeVars(e), m);
           return Remap(DeDup(pe.VisitExpr(e, ll)->dynamic));
         });
     }, e);
@@ -762,7 +785,7 @@ Expr PartialEval(const Expr& e) {
 
 TVM_REGISTER_API("relay._ir_pass.partial_eval")
 .set_body([](TVMArgs args, TVMRetValue* ret) {
-    *ret = PartialEval(args[0]);
+    *ret = PartialEval(args[0], args[1]);
   });
 
 }  // namespace relay

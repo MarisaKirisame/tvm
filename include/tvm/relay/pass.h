@@ -557,7 +557,7 @@ Expr ToGraphNormalForm(const Expr& e);
  * It has two benefit: remove runtime overhead, and allow more optimization (typically fusion).
  * As a side effect, code size will explode.
  */
-Expr PartialEval(const Expr& e);
+Expr PartialEval(const Expr& e, const Module& mod);
 }  // namespace relay
 }  // namespace tvm
 

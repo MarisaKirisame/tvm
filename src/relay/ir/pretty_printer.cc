@@ -564,6 +564,24 @@ class PrettyPrinter :
     return doc << "), " << PrintDType(node->dtype) << "]";
   }
 
+  Doc VisitType_(const GlobalTypeVarNode* node) final {
+    Doc doc;
+    doc << node->var->name_hint;
+    return doc;
+  }
+
+  Doc VisitType_(const TypeCallNode* node) final {
+    Doc doc = PrintType(node->func, false);
+    std::vector<Doc> args;
+    for (const Type& t : node->args) {
+      args.push_back(PrintType(t, false));
+    }
+    doc << "(";
+    doc << PrintVec(args);
+    doc << ")";
+    return doc;
+  }
+
   Doc VisitType_(const TupleTypeNode* node) final {
     std::vector<Doc> fields;
     for (Type field : node->fields) {
