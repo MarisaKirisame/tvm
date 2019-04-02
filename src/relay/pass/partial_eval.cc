@@ -85,6 +85,7 @@
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/pattern_functor.h>
 #include <tvm/relay/interpreter.h>
+#include "../ir/type_functor.h"
 #include "pass_util.h"
 #include "let_list.h"
 
@@ -131,7 +132,6 @@ struct PStaticNode : Node {
 };
 
 RELAY_DEFINE_NODE_REF(PStatic, PStaticNode, NodeRef);
-
 
 struct STupleNode : StaticNode {
   std::vector<PStatic> fields;
@@ -361,8 +361,6 @@ bool IsAtomic(const Expr& e) {
   return e.as<VarNode>() || e.as<OpNode>() || e.as<ConstructorNode>() || e.as<GlobalVarNode>();
 }
 
-Expr Uniquify(const Expr& e);
-
 using FuncId = size_t;
 
 struct WithFuncId;
@@ -381,6 +379,8 @@ Annotate MkWithFuncId(const Expr& expr, FuncId fid) {
 }
 
 Expr StripWithFuncId(const Expr& e);
+
+Expr DeDup(const Expr& e);
 
 Function AsFunc(const Expr& e) {
   if (e.as<FunctionNode>()) {
@@ -644,7 +644,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
   PStatic VisitFunc(const Function& func, LetList* ll) {
     Var v = VarNode::make("x", Type());
     Func f = VisitFuncStatic(func, v);
-    Function u_func = AsFunc(RegisterFuncId(Uniquify(AnnotateFuncId(func))));
+    Function u_func = AsFunc(RegisterFuncId(DeDup(AnnotateFuncId(func))));
     // TODO(@M.K.): we seems to reduce landin knot into letrec.
     // restore letrec support across whole relay.
     return HasStatic(MkSFunc(f),
@@ -888,7 +888,7 @@ private:
   /*! Termination checking is done as follow:
    *  We have finitely many FunctionId.
    *  Each Function Id map to a class of semantically equivalent function (ignoring type),
-   *  as both TypeSubst, Uniquify create semantically equivalent function.
+   *  as both TypeSubst, DeDup create semantically equivalent function.
    *  We partially map each FunctionId to a std::vector<Time>,
    *  denoting the minimal TimeFrame of the arguments of the function.
    *  Every time we try to inline a Function, we make sure it either not has a vector<Time>,
@@ -913,11 +913,19 @@ TypeVar DeDupTypeVar(const TypeVar& tv) {
 
 /*! \brief Use a fresh Id for every Var to make the result well-formed. */
 Expr DeDup(const Expr& e) {
-  class DeDupMutator : public ExprMutator, public PatternMutator {
+  class DeDupMutator : public ExprMutator,
+                       public PatternMutator,
+                       public TypeMutator {
    public:
     Var Fresh(const Var& v) {
-      Var ret = DeDupVar(v);
+      Var ret = VarNode::make(v->name_hint(), VisitType(v->type_annotation));
       rename_[v] = ret;
+      return ret;
+    }
+
+    TypeVar Fresh(const TypeVar& v) {
+      TypeVar ret = DeDupTypeVar(v);
+      type_rename_[v] = ret;
       return ret;
     }
 
@@ -935,15 +943,23 @@ Expr DeDup(const Expr& e) {
       return LetNode::make(v, VisitExpr(op->value), VisitExpr(op->body));
     }
 
+    Type VisitType(const Type& t) final {
+      return t.defined() ? TypeMutator::VisitType(t) : t;
+    }
+
     Expr VisitExpr_(const FunctionNode* op) final {
+      tvm::Array<TypeVar> type_params;
+      for (const TypeVar& type_param : op->type_params) {
+        type_params.push_back(Fresh(type_param));
+      }
       tvm::Array<Var> params;
       for (const Var& param : op->params) {
         params.push_back(Fresh(param));
       }
       return FunctionNode::make(params,
                                 VisitExpr(op->body),
-                                op->ret_type,
-                                op->type_params,
+                                VisitType(op->ret_type),
+                                type_params,
                                 op->attrs);
     }
 
@@ -960,17 +976,19 @@ Expr DeDup(const Expr& e) {
       return Fresh(v);
     }
 
+    Type VisitType_(const TypeVarNode* op) final {
+      TypeVar v = GetRef<TypeVar>(op);
+      return type_rename_.count(v) != 0 ? type_rename_.at(v) : v;
+    }
+
    private:
     std::unordered_map<Var, Var, NodeHash, NodeEqual> rename_;
+    std::unordered_map<TypeVar, TypeVar, NodeHash, NodeEqual> type_rename_;
   };
+
   Expr ret = DeDupMutator().VisitExpr(e);
   CHECK_EQ(FreeVars(ret).size(), FreeVars(e).size());
   return ret;
-}
-
-Expr Uniquify(const Expr& e) {
-  // TODO(@M.K.): do
-  return e;
 }
 
 /*! \brief Remap multiple Var sharing the same Id into the same Var. */
