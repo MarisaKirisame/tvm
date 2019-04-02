@@ -6,7 +6,9 @@ from tvm.relay import op, create_executor
 from tvm.relay.backend.interpreter import Value, TupleValue, ConstructorValue
 from tvm.relay.prelude import Prelude
 from tvm.relay import create_executor
-from tvm.relay import Var, TypeVar, TupleGetItem, Let, Function, const, RefRead, RefWrite, RefCreate, TensorType, Tuple, If, Module, Clause, PatternConstructor, PatternVar, Match
+from tvm.relay import Var, TypeVar, TupleGetItem, Let, Function, const, RefRead, RefWrite, RefCreate
+from tvm.relay import TensorType, Tuple, If, Module, Clause, PatternConstructor, PatternVar, Match
+from tvm.relay import GlobalVar, Call, Type
 
 def check_eval(expr, expected_result, mod=None, rtol=1e-07):
     ctx = tvm.context("llvm", 0)
@@ -119,9 +121,9 @@ def test_head_cons():
         y = Var("y")
         z = Var("z")
         cons_case = Clause(PatternConstructor(p.cons,
-                                                          [PatternVar(y),
-                                                           PatternVar(z)]),
-                                 y)
+                                              [PatternVar(y),
+                                               PatternVar(z)]),
+                           y)
         return Function([x], Match(x, [cons_case]), a, [a])
     t = TypeVar("t")
     x = Var("x", t)
@@ -141,6 +143,18 @@ def test_map():
     expected = p.cons(f(const(1)), p.cons(f(const(2)), p.cons(f(const(3)), p.nil())))
     assert alpha_equal(dcpe(orig, mod=mod), expected)
 
+
+def test_loop():
+    mod = Module()
+    t = TypeVar("t")
+    x = Var("x", t)
+    loop = GlobalVar("loop")
+    mod[loop] = Function([x], loop(x), t, [t])
+    res = dcpe(loop(const(1)), mod=mod)
+    expected = Call(loop, [const(1)], None, [None])
+    assert alpha_equal(res, expected)
+
+
 if __name__ == '__main__':
     test_tuple()
     test_const_inline()
@@ -150,3 +164,4 @@ if __name__ == '__main__':
     test_function_invalidate()
     test_head_cons()
     test_map()
+    test_loop()

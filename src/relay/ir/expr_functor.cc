@@ -202,6 +202,10 @@ Pattern ExprMutator::VisitPattern(const Pattern& p) { return p; }
 
 Type ExprMutator::VisitType(const Type& t) { return t; }
 
+Expr ExprMutator::VisitExpr_(const AnnotateNode* op) {
+  return AnnotateNode::make(VisitExpr(op->expr), op->annotation);
+}
+
 void ExprVisitor::VisitExpr(const Expr& expr) {
   auto it = visit_counter_.find(expr.get());
   if (it != visit_counter_.end()) {
@@ -294,6 +298,10 @@ void ExprVisitor::VisitExpr_(const MatchNode* op) {
   for (const Clause& c : op->clauses) {
     this->VisitClause(c);
   }
+}
+
+void ExprVisitor::VisitExpr_(const AnnotateNode* op) {
+  this->VisitExpr(op->expr);
 }
 
 void ExprVisitor::VisitClause(const Clause& op) {

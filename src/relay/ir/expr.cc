@@ -330,5 +330,17 @@ TVM_REGISTER_API("relay._expr.TempExprRealize")
   *ret = temp->Realize();
 });
 
+Annotate AnnotateNode::make(Expr expr, NodeRef annotation) {
+  NodePtr<AnnotateNode> n = make_node<AnnotateNode>();
+  n->expr = std::move(expr);
+  n->annotation = std::move(annotation);
+  return Annotate(n);
+}
+
+TVM_STATIC_IR_FUNCTOR_REGISTER(IRPrinter, vtable)
+.set_dispatch<AnnotateNode>([](const AnnotateNode* node, tvm::IRPrinter* p) {
+    p->stream << "AnnotateNode(" << node->expr << ")";
+  });
+
 }  // namespace relay
 }  // namespace tvm

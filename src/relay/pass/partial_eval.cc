@@ -234,7 +234,7 @@ class Environment {
       }
       ++rit;
     }
-    LOG(FATAL) << "Unknown Variable: " << v;
+    LOG(FATAL) << "Unknown Variable: " << v << v.as<VarNode>();
     throw;
   }
 
@@ -361,6 +361,39 @@ bool IsAtomic(const Expr& e) {
   return e.as<VarNode>() || e.as<OpNode>() || e.as<ConstructorNode>() || e.as<GlobalVarNode>();
 }
 
+Expr Uniquify(const Expr& e);
+
+using FuncId = size_t;
+
+struct WithFuncId;
+
+struct WithFuncIdNode : Node {
+  FuncId fid;
+  WithFuncIdNode(FuncId fid) : fid(fid) { }
+  static constexpr const char* _type_key = "relay.WithFuncId";
+  TVM_DECLARE_NODE_TYPE_INFO(WithFuncIdNode, Node);
+};
+
+RELAY_DEFINE_NODE_REF(WithFuncId, WithFuncIdNode, NodeRef);
+
+Annotate MkWithFuncId(const Expr& expr, FuncId fid) {
+  return AnnotateNode::make(expr, WithFuncId(make_node<WithFuncIdNode>(fid)));
+}
+
+Expr StripWithFuncId(const Expr& e);
+
+Function AsFunc(const Expr& e) {
+  if (e.as<FunctionNode>()) {
+    return Downcast<Function>(e);
+  } else if (const AnnotateNode* a = e.as<AnnotateNode>()) {
+    CHECK(a->annotation.as<WithFuncIdNode>());
+    return AsFunc(a->expr);
+  } else {
+    LOG(FATAL) << "Unknown case";
+    throw;
+  }
+}
+
 class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
                          public PatternFunctor<MatchStatus(const Pattern&, const PStatic&)> {
  public:
@@ -372,6 +405,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
     }
   }
 
+  size_t depth = 0;
   PStatic VisitExpr(const Expr& e, LetList* ll) final {
     PStatic ret = ExprFunctor<PStatic(const Expr&, LetList*)>::VisitExpr(e, ll);
     CHECK(IsAtomic(ret->dynamic)) << ret->dynamic;
@@ -408,18 +442,19 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
 
   PStatic VisitExpr_(const GlobalVarNode* op, LetList* ll) final {
     GlobalVar gv = GetRef<GlobalVar>(op);
-    if (map_.count(gv) == 0) {
+    if (gv_map_.count(gv) == 0) {
       if (mod_.defined()) {
         Function func = mod_->Lookup(gv);
-        Func f = VisitFuncStatic(func);
-        map_.insert({gv, HasStatic(MkSFunc(f), gv)});
-        func = Downcast<Function>(PostProcess(VisitFuncDynamic(func, f)));
+        InitializeFuncId(func);
+        Func f = VisitFuncStatic(func, gv);
+        gv_map_.insert({gv, HasStatic(MkSFunc(f), gv)});
+        func = AsFunc(PostProcess(VisitFuncDynamic(func, f)));
         mod_->Update(gv, func);
       } else {
-        map_.insert({gv, NoStatic(gv)});
+        gv_map_.insert({gv, NoStatic(gv)});
       }
     }
-    return map_.at(gv);
+    return gv_map_.at(gv);
   }
 
   PStatic VisitExpr_(const LetNode* op, LetList* ll) final {
@@ -499,22 +534,34 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
     }
   }
 
+  PStatic VisitExpr_(const AnnotateNode* op, LetList* ll) final {
+    CHECK(op->annotation.as<WithFuncIdNode>());
+    return VisitExpr(op->expr, ll);
+  }
+
   struct TimeFrame {
     PartialEvaluator* pe_;
-    const Function& func_;
+    FuncId fid_;
+    std::vector<Time> old_time;
+    bool has_old_time;
     TimeFrame(PartialEvaluator* pe,
-              const Function& func,
-              const std::vector<Time>& args_time) : pe_(pe), func_(func) {
-      CHECK_EQ(pe_->time_map_.count(func_), 0);
-      pe_->time_map_.insert({func_, args_time});
+              FuncId fid,
+              const std::vector<Time>& args_time) : pe_(pe), fid_(fid) {
+      has_old_time = pe_->time_map_.count(fid_) > 0;
+      old_time = pe_->time_map_[fid_];
+      pe_->time_map_[fid_] = args_time;
     }
     ~TimeFrame() {
-      CHECK_GT(pe_->time_map_.count(func_), 0);
-      pe_->time_map_.erase(func_);
+      if (has_old_time) {
+        pe_->time_map_[fid_] = old_time;
+      } else {
+        pe_->time_map_.erase(fid_);
+      }
     }
   };
 
-  Func VisitFuncStatic(const Function& func) {
+  Func VisitFuncStatic(const Function& func, const Expr& var) {
+    CHECK(IsAtomic(var));
     if (func->IsPrimitive()) {
       return ConstEvaluateFunc(func);
     }
@@ -523,9 +570,9 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
       free_vars.push_back(std::pair<Var, PStatic>(v, env_.Lookup(v)));
     }
     return [=](const std::vector<PStatic>& pv,
-                 const Attrs& attrs,
-                 const tvm::Array<Type>& type_args,
-                 LetList* ll) {
+               const Attrs& attrs,
+               const tvm::Array<Type>& type_args,
+               LetList* ll) {
       return env_.Extend<PStatic>([&]() {
           CHECK_EQ(pv.size(), func->params.size());
           for (size_t i = 0; i < pv.size(); ++i) {
@@ -545,21 +592,23 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
           for (const auto& v : pv) {
             args_time.push_back(v->created_time);
           }
+          CHECK_GT(func_map_.count(func), 0);
+          FuncId fid = func_map_.at(func);
           auto recurse = [&]() {
-            return VisitExpr(TypeSubst(func->body, subst), ll);
+            TimeFrame tf(this, fid, args_time);
+            return VisitExpr(RegisterFuncId(TypeSubst(AnnotateFuncId(func->body), subst)), ll);
           };
-          if (time_map_.count(func) == 0) {
-            TimeFrame tf(this, func, args_time);
+          if (time_map_.count(fid) == 0) {
             return recurse();
           } else {
             bool can_recurse = false;
-            std::vector<Time>& min_time = time_map_.at(func);
+            std::vector<Time>& min_time = time_map_.at(fid);
             CHECK_EQ(args_time.size(), min_time.size());
             for (size_t i = 0; i < args_time.size(); ++i) {
               if (args_time[i] < min_time[i]) {
-                min_time[i] = args_time[i];
                 can_recurse = true;
               }
+              args_time[i] = std::min(args_time[i], min_time[i]);
             }
             if (can_recurse) {
               return recurse();
@@ -568,7 +617,7 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
               for (const auto& v : pv) {
                 dyn.push_back(v->dynamic);
               }
-              return NoStatic(ll->Push(CallNode::make(func, dyn, attrs, type_args)));
+              return NoStatic(ll->Push(CallNode::make(var, dyn, attrs, type_args)));
             }
           }
         });
@@ -592,15 +641,19 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
       });
   }
 
-  PStatic VisitFunc(const Function& func) {
-    Func f = VisitFuncStatic(func);
-    return HasStatic(MkSFunc(f), VisitFuncDynamic(func, f));
+  PStatic VisitFunc(const Function& func, LetList* ll) {
+    Var v = VarNode::make("x", Type());
+    Func f = VisitFuncStatic(func, v);
+    Function u_func = AsFunc(RegisterFuncId(Uniquify(AnnotateFuncId(func))));
+    // TODO(@M.K.): we seems to reduce landin knot into letrec.
+    // restore letrec support across whole relay.
+    return HasStatic(MkSFunc(f),
+                     ll->Push(v, VisitFuncDynamic(u_func, f)));
   }
 
   PStatic VisitExpr_(const FunctionNode* op, LetList* ll) final {
     Function func = GetRef<Function>(op);
-    PStatic res = VisitFunc(func);
-    return PStatic(make_node<PStaticNode>(res->pstatic, ll->Push(res->dynamic)));
+    return VisitFunc(func, ll);
   }
 
   Expr Reflect(const PStatic& st) {
@@ -757,11 +810,94 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr&, LetList*)>,
     }
   }
 
- private:
+  void InitializeFuncId(const Expr& e) {
+    struct InitializeFuncIdVisitor : ExprVisitor, PatternVisitor {
+      PartialEvaluator* pe;
+      explicit InitializeFuncIdVisitor(PartialEvaluator* pe) : pe(pe) { }
+
+      void VisitExpr_(const FunctionNode* op) final {
+        Function f = GetRef<Function>(op);
+        CHECK_EQ(pe->func_map_.count(f), 0);
+        pe->func_map_.insert({f, pe->func_map_.size()});
+        VisitExpr(f->body);
+      }
+
+      void VisitPattern(const Pattern& p) final {
+        PatternVisitor::VisitPattern(p);
+      }
+    };
+    InitializeFuncIdVisitor(this).VisitExpr(e);
+  }
+
+  Expr RegisterFuncId(const Expr& e) {
+    struct RegisterFuncIdVisitor : ExprVisitor, PatternVisitor {
+      PartialEvaluator* pe;
+      explicit RegisterFuncIdVisitor(PartialEvaluator* pe) : pe(pe) { }
+
+      void VisitExpr_(const AnnotateNode* op) final {
+        if (const WithFuncIdNode* n = op->annotation.as<WithFuncIdNode>()) {
+          Function f = AsFunc(op->expr);
+          if (pe->func_map_.count(f) != 0) {
+            CHECK_EQ(pe->func_map_.at(f), n->fid);
+          }
+          pe->func_map_.insert({f, n->fid});
+        }
+        ExprVisitor::VisitExpr_(op);
+      }
+
+      void VisitExpr_(const FunctionNode* op) final {
+        Function f = GetRef<Function>(op);
+        CHECK_GT(pe->func_map_.count(f), 0);
+        ExprVisitor::VisitExpr_(op);
+      }
+
+      void VisitPattern(const Pattern& p) final {
+        PatternVisitor::VisitPattern(p);
+      }
+    };
+    RegisterFuncIdVisitor(this).VisitExpr(e);
+    return e;
+  }
+
+  Expr AnnotateFuncId(const Expr& e) {
+    struct AnnotateFuncIdMutator : ExprMutator, PatternMutator {
+      PartialEvaluator* pe;
+      explicit AnnotateFuncIdMutator(PartialEvaluator* pe) : pe(pe) { }
+
+      Expr VisitExpr_(const FunctionNode* op) final {
+        Function f = GetRef<Function>(op);
+        CHECK_GT(pe->func_map_.count(f), 0);
+        return MkWithFuncId(ExprMutator::VisitExpr_(op), pe->func_map_.at(f));
+      }
+
+      Pattern VisitPattern(const Pattern& p) final {
+        return PatternMutator::VisitPattern(p);
+      }
+
+      Var VisitVar(const Var& v) final {
+        return v;
+      }
+    };
+    return AnnotateFuncIdMutator(this).VisitExpr(e);
+  }
+
+private:
   Environment env_;
   Module mod_;
-  std::unordered_map<GlobalVar, PStatic, NodeHash, NodeEqual> map_;
-  std::unordered_map<Function, std::vector<Time>, NodeHash, NodeEqual> time_map_;
+  std::unordered_map<GlobalVar, PStatic, NodeHash, NodeEqual> gv_map_;
+  /*! Termination checking is done as follow:
+   *  We have finitely many FunctionId.
+   *  Each Function Id map to a class of semantically equivalent function (ignoring type),
+   *  as both TypeSubst, Uniquify create semantically equivalent function.
+   *  We partially map each FunctionId to a std::vector<Time>,
+   *  denoting the minimal TimeFrame of the arguments of the function.
+   *  Every time we try to inline a Function, we make sure it either not has a vector<Time>,
+   *  or some argument has lesser time.
+   *  In any case, we remap the mapping to a minimal vector<Time>
+   *  when we PE inside the Function body.
+   */
+  std::unordered_map<Function, FuncId, NodeHash, NodeEqual> func_map_;
+  std::unordered_map<FuncId, std::vector<Time> > time_map_;
   Store store_;
   DLContext context_ = CPUContext();
   FInterpreter executor_ = CPUInterpreter();
@@ -832,6 +968,11 @@ Expr DeDup(const Expr& e) {
   return ret;
 }
 
+Expr Uniquify(const Expr& e) {
+  // TODO(@M.K.): do
+  return e;
+}
+
 /*! \brief Remap multiple Var sharing the same Id into the same Var. */
 Expr Remap(const Expr& e) {
   class RemapMutator : public ExprMutator, public PatternMutator {
@@ -853,15 +994,38 @@ Expr Remap(const Expr& e) {
   return RemapMutator().VisitExpr(e);
 }
 
+Expr StripWithFuncId(const Expr& e) {
+  struct StripWithFuncIdMutator : ExprMutator, PatternMutator {
+    Expr VisitExpr_(const AnnotateNode* op) final {
+      if (op->annotation.as<WithFuncIdNode>()) {
+        return VisitExpr(op->expr);
+      } else {
+        return ExprMutator::VisitExpr(GetRef<Expr>(op));
+      }
+    }
+
+    Pattern VisitPattern(const Pattern& p) final {
+      return PatternMutator::VisitPattern(p);
+    }
+
+    Var VisitVar(const Var& v) final {
+      return v;
+    }
+
+  };
+  return StripWithFuncIdMutator().VisitExpr(e);
+}
+
 Expr PostProcess(const Expr& e) {
-  return DeDup(Remap(e));
+  return StripWithFuncId(DeDup(Remap(e)));
 }
 
 Expr PartialEval(const Expr& e, const Module& m) {
   return TransformF([&](const Expr& e) {
       return LetList::With([&](LetList* ll) {
           PartialEvaluator pe(FreeVars(e), m);
-          return PostProcess(pe.VisitExpr(e, ll)->dynamic);
+          pe.InitializeFuncId(e);
+          return PostProcess(pe.VisitExpr(pe.RegisterFuncId(pe.AnnotateFuncId(e)), ll)->dynamic);
         });
     }, e);
 }

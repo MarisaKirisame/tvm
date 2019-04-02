@@ -523,7 +523,7 @@ RELAY_DEFINE_NODE_REF(RefWrite, RefWriteNode, Expr);
  * rewriting pass such as layout or type transformation.
  *
  * Subclass TempExprNode allows us to pattern match on
- * specific kind TempExpr and use them for expression rewriting.
+ * specific kind of TempExpr and use them for expression rewriting.
  *
  * TempExpr should only be used within a pass,
  */
@@ -540,6 +540,25 @@ class TempExprNode : public ExprNode {
 };
 
 RELAY_DEFINE_NODE_REF(TempExpr, TempExprNode, Expr);
+
+class Annotate;
+class AnnotateNode : public ExprNode {
+ public:
+  Expr expr;
+  NodeRef annotation;
+  void VisitAttrs(tvm::AttrVisitor* v) final {
+    v->Visit("expr", &expr);
+    v->Visit("annotation", &annotation);
+    v->Visit("_checked_type_", &checked_type_);
+  }
+
+  TVM_DLL static Annotate make(Expr expr, NodeRef annotation);
+
+  static constexpr const char* _type_key = "relay.AnnotateNode";
+  TVM_DECLARE_NODE_TYPE_INFO(AnnotateNode, ExprNode);
+};
+
+RELAY_DEFINE_NODE_REF(Annotate, AnnotateNode, Expr);
 
 // implementataions
 inline const Type& ExprNode::checked_type() const {

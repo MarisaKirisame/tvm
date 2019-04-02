@@ -98,6 +98,7 @@ class ExprFunctor<R(const Expr& n, Args...)> {
   virtual R VisitExpr_(const RefWriteNode* op, Args... args) EXPR_FUNCTOR_DEFAULT;
   virtual R VisitExpr_(const ConstructorNode* op, Args... args) EXPR_FUNCTOR_DEFAULT;
   virtual R VisitExpr_(const MatchNode* op, Args... args) EXPR_FUNCTOR_DEFAULT;
+  virtual R VisitExpr_(const AnnotateNode* op, Args... args) EXPR_FUNCTOR_DEFAULT;
   virtual R VisitExprDefault_(const Node* op, Args...) {
     throw Error(std::string("Do not have a default for ") + op->type_key());
   }
@@ -122,6 +123,7 @@ class ExprFunctor<R(const Expr& n, Args...)> {
     RELAY_EXPR_FUNCTOR_DISPATCH(RefWriteNode);
     RELAY_EXPR_FUNCTOR_DISPATCH(ConstructorNode);
     RELAY_EXPR_FUNCTOR_DISPATCH(MatchNode);
+    RELAY_EXPR_FUNCTOR_DISPATCH(AnnotateNode);
     return vtable;
   }
 };
@@ -152,6 +154,7 @@ class ExprVisitor
   void VisitExpr_(const RefWriteNode* op) override;
   void VisitExpr_(const ConstructorNode* op) override;
   void VisitExpr_(const MatchNode* op) override;
+  void VisitExpr_(const AnnotateNode* op) override;
   virtual void VisitType(const Type& t);
   virtual void VisitClause(const Clause& c);
   virtual void VisitPattern(const Pattern& c);
@@ -194,6 +197,7 @@ class ExprMutator
   Expr VisitExpr_(const RefWriteNode* op) override;
   Expr VisitExpr_(const ConstructorNode* op) override;
   Expr VisitExpr_(const MatchNode* op) override;
+  Expr VisitExpr_(const AnnotateNode* op) override;
 
   /*!
    * \brief Used to visit the types inside of expressions.
