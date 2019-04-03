@@ -77,10 +77,17 @@ def test_op_let():
 
 
 def test_tuple_get_item():
-    t = relay.Var('t')
+    t = relay.Var("t")
     g = relay.TupleGetItem(t, 0)
     assert alpha_equal(dead_code_elimination(g), g)
     assert alpha_equal(dead_code_elimination(relay.TupleGetItem(relay.Let(e.a, e.one, t), 0)), g)
+
+
+def test_dce_respect_effect():
+    r = relay.Var("r")
+    u = relay.Var("u")
+    orig = relay.Let(u, relay.RefWrite(r, relay.const(1)), relay.RefRead(r))
+    assert alpha_equal(dead_code_elimination(orig), orig)
 
 
 if __name__ == "__main__":
@@ -91,3 +98,4 @@ if __name__ == "__main__":
     test_recursion()
     test_op_let()
     test_tuple_get_item()
+    test_dce_respect_effect()

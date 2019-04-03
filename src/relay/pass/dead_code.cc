@@ -8,6 +8,18 @@
  * The algorithm is implemented by two visitor:
  * CalcDep turn an expr into a dependency graph of expr,
  * GenLet turn the dependency graph into a let list, taking only the used value.
+ *
+ * Also, Dead Code Eliminator has to take into account of effect -
+ * Call to foreign function should not be eliminated.
+ * Write to reference should not be eliminated if that reference is used.
+ *
+ * To do this we implement a simple escape analysis by abstracting Reference Value into StoreId.
+ * Reference holding two different sid do not alias.
+ * For every Expr, we calculate the set of sid it might hold.
+ * Additionally, there is a External StoreId, assigned to every input.
+ *
+ * Whenever a function is called, or a reference is written into,
+ * We make the set of reference inside depend on that call/write.
  */
 #include <tvm/relay/pass.h>
 #include <tvm/relay/expr_functor.h>
@@ -16,6 +28,10 @@
 namespace tvm {
 namespace relay {
 
+using sid = size_t;
+class EscapeAnalysis : ExprFunctor<std::unordered_set<sid>(const Expr&)> {
+  
+};
 // calculate the dependency graph from expression
 class CalcDep : private ExprVisitor {
  public:
