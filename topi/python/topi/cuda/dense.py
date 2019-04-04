@@ -27,16 +27,15 @@ def dense_cuda(data, weight, bias=None):
     output : tvm.Tensor
         2-D with shape [batch, out_dim]
     """
-    assert len(data.shape) == 2 and len(weight.shape) == 2, \
-        "only support 2-dim dense"
-    if bias is not None:
-        assert len(bias.shape) == 1
-    batch, in_dim = data.shape
-    out_dim, _ = weight.shape
     target = tvm.target.current_target()
-    if "cublas" in target.libs:
+    if "cublas" in target.libs and len(data.shape) == 2:
+        assert len(weight.shape) == 2, \
+            "only support 2-dim dense"
+        batch, in_dim = data.shape
+        out_dim, _ = weight.shape
         matmul = cublas.matmul(data, weight, False, True)
         if bias is not None:
+            assert len(bias.shape) == 1
             matmul = tvm.compute((batch, out_dim), \
                                  lambda i, j: matmul[i, j] + bias[j], \
                                  tag=tag.BROADCAST)
