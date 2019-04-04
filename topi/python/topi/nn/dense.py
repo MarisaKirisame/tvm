@@ -22,6 +22,9 @@ def dense_default(data, weight, bias=None):
     output : tvm.Tensor
         2-D with shape [batch, out_dim]
     """
+    if len(data.shape) != 2 or len(weight.shape) != 2:
+        print(data.shape)
+        print(weight.shape)
     assert len(data.shape) == 2 and len(weight.shape) == 2, \
         "only support 2-dim dense"
     if bias is not None:

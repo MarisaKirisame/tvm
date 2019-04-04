@@ -77,6 +77,9 @@ void ErrorReporter::RenderErrors(const Module& module, bool use_color) {
   for (auto pair : error_maps) {
     auto global = pair.first;
     auto err_map = pair.second;
+    for (auto x : err_map) {
+      std::cout << x.second << std::endl;
+    }
     auto func = module->Lookup(global);
 
     // We output the name of the function before displaying
