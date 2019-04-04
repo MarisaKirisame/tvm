@@ -79,12 +79,12 @@ class BiLSTM(Network):
                                    dtype=dtype)(l)
         fwd = LSTM(l)
         rev = LSTM(self.p.rev(l))
-        lhs = op.concatenate([TupleGetItem(fwd, 0), TupleGetItem(rev, 0)], axis=0)
-        t = TensorType(shape=(memory_size,), dtype=dtype)
+        lhs = op.concatenate([TupleGetItem(fwd, 0), TupleGetItem(rev, 0)], axis=1)
+        t = TensorType(shape=(1, memory_size), dtype=dtype)
         x = Var("x", TupleType([t, t])) # cannot infer here
         rhs = self.p.map(Function([x], op.concatenate([TupleGetItem(x, 0),
                                                        TupleGetItem(x, 1)],
-                                                      axis=0)),
+                                                      axis=1)),
                          self.p.zip(TupleGetItem(fwd, 1), TupleGetItem(rev, 1)))
         return Tuple([lhs, rhs])
 
