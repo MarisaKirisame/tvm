@@ -34,13 +34,13 @@ def dense_default(data, weight, bias=None):
     def matmul_func(*idx):
         batch_idx = idx[:-1]
         out_idx = idx[-1]
-        return tvm.sum(data[tuple(batch + [k])] * weight[out_idx, k], axis=k)
+        return tvm.sum(data[tuple(batch_idx + (k,))] * weight[out_idx, k], axis=k)
     matmul = tvm.compute(out_shape, matmul_func, tag='dense')
     if bias is not None:
         def matmul_func(*idx):
             batch_idx = idx[:-1]
             out_idx = idx[-1]
-            return matmul[tuple(batch + [k])] + bias[out_idx]
+            return matmul[tuple(batch_idx + (k,))] + bias[out_idx]
         matmul = tvm.compute(out_shape, matmul_func, tag=tag.BROADCAST)
     return matmul
 

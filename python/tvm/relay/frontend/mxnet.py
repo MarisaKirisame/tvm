@@ -4,6 +4,7 @@ from __future__ import absolute_import as _abs
 
 import json
 import tvm
+from tvm.relay.ir_pass import infer_type
 from .. import ir_pass
 from .. import expr as _expr
 from .. import op as _op

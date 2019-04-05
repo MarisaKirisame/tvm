@@ -885,6 +885,21 @@ class FuseMutator : private ExprMutator {
 
 
 Expr FuseOps(const Expr& expr, int fuse_opt_level) {
+  struct DenseToBatchMatMul : ExprMutator {
+    Expr VisitExpr_(const CallNode* op) final {
+      if (op->op.as<OpNode>()) {
+	Op o = Downcast<Op>(op->op);
+	if (o.same_as(Op::Get("nn.dense"))) {
+	  CHECK_EQ(op->args.size(), 2);
+	  auto tt = Downcast<TensorType>(op->args[0]->checked_type());
+	  if (tt->shape.size() == 3) {
+	    return CallNode::make(Op::Get("nn.batch_matmul"), {VisitExpr(op->args[0]), VisitExpr(op->args[1])});
+	  }
+	}
+      }
+      return ExprMutator::VisitExpr_(op);
+    }
+  };
   // First we convert all chains of fusable ops into
   // abstracted functions which we mark as primtive
   // then we convert these primtive functions into
