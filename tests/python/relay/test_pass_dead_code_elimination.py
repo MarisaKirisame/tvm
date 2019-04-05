@@ -87,6 +87,7 @@ def test_dce_respect_effect():
     r = relay.Var("r")
     u = relay.Var("u")
     orig = relay.Let(u, relay.RefWrite(r, relay.const(1)), relay.RefRead(r))
+    print(dead_code_elimination(orig))
     assert alpha_equal(dead_code_elimination(orig), orig)
 
 

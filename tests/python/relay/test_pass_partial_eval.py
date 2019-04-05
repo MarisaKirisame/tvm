@@ -48,6 +48,25 @@ def test_ref():
     assert alpha_equal(dcpe(square), Function([d], d * d))
 
 
+def test_empty_ad():
+    shape = (10, 10)
+    dtype = "float32"
+    t = TensorType(shape, dtype)
+    d = Var("d", t)
+    f = Function([d], d)
+    g = dcpe(gradient(f))
+    m = d * d
+    x = relay.Var("x")
+    o = op.ones_like(x)
+    x1 = relay.Var("x1")
+    grad = op.zeros_like(d) + op.collapse_sum_like(x1 * d, d) + op.collapse_sum_like(x1 * d, d)
+    body = Tuple([x, Tuple([grad])])
+    body = relay.Let(x1, o, body)
+    expected = Function([d], relay.Let(x, m, body))
+    print(g)
+    assert alpha_equal(g, expected)
+
+
 def test_ad():
     shape = (10, 10)
     dtype = "float32"
@@ -63,6 +82,7 @@ def test_ad():
     body = Tuple([x, Tuple([grad])])
     body = relay.Let(x1, o, body)
     expected = Function([d], relay.Let(x, m, body))
+    print(g)
     assert alpha_equal(g, expected)
 
 
@@ -156,6 +176,8 @@ def test_loop():
 
 
 if __name__ == '__main__':
+    test_empty_ad()
+    raise
     test_tuple()
     test_const_inline()
     test_ref()
