@@ -213,8 +213,7 @@ TVM_REGISTER_API("relay._make.Call")
 
 TVM_STATIC_IR_FUNCTOR_REGISTER(IRPrinter, vtable)
 .set_dispatch<CallNode>([](const CallNode* node, tvm::IRPrinter* p) {
-  p->stream << "CallNode(" << node->op << ", " << node->args << ", "
-    << node->attrs << ", " << node->type_args << ")";
+  p->stream << "CallNode(" << node->op << ")";
 });
 
 Let LetNode::make(Var var, Expr value, Expr body) {

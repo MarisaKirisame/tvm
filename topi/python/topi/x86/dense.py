@@ -9,7 +9,8 @@ from .util import get_fp32_len
 from .. import generic, tag, nn
 from ..util import traverse_inline, get_const_tuple
 
-@autotvm.register_topi_compute(nn.dense, "cpu", "direct")
+
+#@autotvm.register_topi_compute(nn.dense, "cpu", "direct")
 def _declaration_dense(cfg, data, weight, bias=None):
     batch, _ = get_const_tuple(data.shape)
 
@@ -22,7 +23,7 @@ def _declaration_dense(cfg, data, weight, bias=None):
 
 
 # Declare dense compute with packing weight into cache-friendly layout
-@autotvm.register_topi_compute(nn.dense, "cpu", "direct_pack")
+#@autotvm.register_topi_compute(nn.dense, "cpu", "direct_pack")
 def _declaration_dense_pack(cfg, data, weight, bias=None):
     batch, in_dim = get_const_tuple(data.shape)
     out_dim, _ = get_const_tuple(weight.shape)
@@ -51,7 +52,7 @@ def _declaration_dense_pack(cfg, data, weight, bias=None):
 
 
 # Declare dense compute without packing weight
-@autotvm.register_topi_compute(nn.dense, "cpu", "direct_nopack")
+#@autotvm.register_topi_compute(nn.dense, "cpu", "direct_nopack")
 def _declaration_dense_nopack(cfg, data, weight, bias=None):
     batch, in_dim = get_const_tuple(data.shape)
     out_dim, _ = get_const_tuple(weight.shape)
@@ -79,7 +80,7 @@ def _declaration_dense_nopack(cfg, data, weight, bias=None):
     return C
 
 
-@autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct")
+#@autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct")
 def _schedule_dense(cfg, outs):
     s = tvm.create_schedule([x.op for x in outs])
 
@@ -92,7 +93,7 @@ def _schedule_dense(cfg, outs):
     return s
 
 
-@autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct_pack")
+#@autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct_pack")
 def _schedule_dense_pack(cfg, outs):
     s = tvm.create_schedule([x.op for x in outs])
 
@@ -103,7 +104,7 @@ def _schedule_dense_pack(cfg, outs):
     return s
 
 
-@autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct_nopack")
+#@autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct_nopack")
 def _schedule_dense_nopack(cfg, outs):
     s = tvm.create_schedule([x.op for x in outs])
 

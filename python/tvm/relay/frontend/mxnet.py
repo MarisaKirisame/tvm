@@ -196,7 +196,7 @@ def _mx_batch_norm(inputs, attrs):
 
 def _mx_layer_norm(inputs, attrs):
     # TODO: implement layer norm
-    return inputs[0]
+    return inputs[0] * inputs[0]
 
 def _mx_div_sqrt_dim(inputs, attrs):
     assert len(inputs) == 1
@@ -209,11 +209,11 @@ def _mx_div_sqrt_dim(inputs, attrs):
 
 def _mx_erf(inputs, attrs):
     # TODO: implement erf
-    return inputs[0]
+    return inputs[0] * inputs[0]
 
 def _mx_sequence_mask(inputs, attrs):
     # TODO: implement seq mask
-    return inputs[0]
+    return inputs[0] * inputs[0]
 
 def _mx_slice(inputs, attrs):
     new_attrs = {}

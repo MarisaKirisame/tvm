@@ -20,9 +20,8 @@ class ExprFunctor:
     # pylint: disable=no-else-return
     def visit(self, expr):
         """Apply the visitor to an expression."""
-        found = self.memo_map.get(expr)
-        if found:
-            return found
+        if expr in self.memo_map:
+            return self.memo_map[expr]
 
         if isinstance(expr, Function):
             res = self.visit_function(expr)
@@ -58,7 +57,6 @@ class ExprFunctor:
             raise Exception("warning unhandled case: {0}".format(type(expr)))
 
         self.memo_map[expr] = res
-
         return res
 
     def visit_function(self, _):
