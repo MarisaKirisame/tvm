@@ -320,6 +320,18 @@ def dense_grad(orig, grad):
     return [collapse_sum_like(transpose(grad) * weight, data),
             collapse_sum_like(data * transpose(grad), weight)]
 
+# UNTESTED
+@register_gradient("take")
+def take_grad(orig, grad):
+    x, y = orig.args
+    return [zeros_like(x), zeros_like(y)]
+    return [Call(op_get("take_grad"), [x, y, grad], orig.attrs), zeros_like(y)]
+
+
+@register_gradient("shape_of")
+def shape_of_grad(orig, grad):
+    return [zeros_like(orig.args[0])]
+
 
 @register_gradient("reshape")
 def reshape_grad(orig, grad):
@@ -365,12 +377,3 @@ def sum_grad(orig, grad):
     """Returns grad broadcasted to data dims"""
     data = orig.args[0]
     return [broadcast_to_like(grad, data)]
-
-
-@register_gradient("nn.cross_entropy")
-def cross_entropy_grad(orig, grad):
-    x, y = orig.args
-    shape = shape_of(x)
-    batch_size = take(shape, const(0, dtype='int32'), axis=0)
-    grad = grad / batch_size.astype('float32')
-    return [-grad * y / x, -grad * log(x)]
