@@ -268,6 +268,19 @@ def conv2d_grad(orig, grad):
     return [backward_data, backward_weight]
 
 
+@register_gradient("max")
+def max_grad(orig, grad):
+    """Returns the gradient of max"""
+    # Only support axis=0, since broadcasting orig to x behaves incorrectly
+    x, axis = orig.args[0], orig.attrs.axis
+    assert(axis is not None and len(axis) == 1 and int(axis[0]) == 0)
+    orig = broadcast_to_like(orig, x)
+    grad = broadcast_to_like(grad, x)
+    indicators = cast_like(equal(orig, x), grad)
+    count = reduce_sum(indicators, axis, True)
+    return [divide(indicators, count) * grad]
+
+
 @register_gradient("nn.softmax")
 def softmax_grad(orig, grad):
     """Gradient of softmax"""
@@ -288,6 +301,31 @@ def dense_grad(orig, grad):
     data, weight = orig.args
     return [collapse_sum_like(transpose(grad) * weight, data),
             collapse_sum_like(data * transpose(grad), weight)]
+
+# UNTESTED
+@register_gradient("cast")
+def cast_grad(orig, grad):
+    grad = cast_like(grad, orig.args[0])
+    return [broadcast_to_like(grad, orig.args[0])]
+
+
+# UNTESTED
+@register_gradient("reshape")
+def reshape_grad(orig, grad):
+    return [reshape_like(grad, orig.args[0])]
+
+
+# UNTESTED
+@register_gradient("take")
+def take_grad(orig, grad):
+    x, y = orig.args
+    return [zeros_like(x), zeros_like(y)]
+    return [Call(op_get("take_grad"), [x, y, grad], orig.attrs), zeros_like(y)]
+
+
+@register_gradient("shape_of")
+def shape_of_grad(orig, grad):
+    return [zeros_like(orig.args[0])]
 
 
 @register_gradient("reshape")
@@ -328,3 +366,34 @@ def sum_grad(orig, grad):
     """Returns grad broadcasted to data dims"""
     data = orig.args[0]
     return [broadcast_to_like(grad, data)]
+
+
+@register_gradient("nn.global_avg_pool2d")
+def global_avg_pool2d_grad(orig, grad):
+    """repeat the h w dimension"""
+    # focuse on conv2d rn.
+    return [orig.args[0]]
+
+
+@register_gradient("nn.batch_norm")
+def batch_norm_grad(orig, grad):
+    """multiply some stuff"""
+    # batchnorm has a wrong api so we will not waste time implementing it.
+    a, b, c, d, e = orig.args
+    return [a, b, c, d, e]
+
+
+@register_gradient("split")
+def split_grad(orig, grad):
+    # return zero
+    return [orig.args[0]]
+
+
+@register_gradient("nn.cross_entropy")
+def cross_entropy_grad(orig, grad):
+    x, y = orig.args
+    sm = softmax(x)
+    shape = shape_of(x)
+    batch_size = take(shape, const(0, dtype='int32'), axis=0)
+    grad = grad / batch_size.astype('float32')
+    return [reduce_sum(y, axis=1) * grad * (sm - y), -grad * log(sm)]

@@ -129,6 +129,59 @@ RELAY_REGISTER_OP("reinterpret")
     .set_attr<TOpPattern>("TOpPattern", kElemWise)
     .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ElemwiseArbitraryLayout);
 
+// relay.cast_like
+bool CastLikeRel(const Array<Type>& types,
+                 int num_inputs,
+                 const Attrs& attrs,
+                 const TypeReporter& reporter) {
+  CHECK_EQ(types.size(), 3);
+  const auto* data = types[0].as<TensorTypeNode>();
+  if (data == nullptr) {
+    CHECK(types[0].as<IncompleteTypeNode>())
+        << "cast: expect input type to be TensorType but get "
+        << types[0];
+    return false;
+  }
+  const auto* dtype_like = types[1].as<TensorTypeNode>();
+  if (dtype_like == nullptr) {
+    CHECK(types[1].as<IncompleteTypeNode>())
+        << "cast: expect input type to be TensorType but get "
+        << types[1];
+    return false;
+  }
+  reporter->Assign(types[2], TensorTypeNode::make(data->shape, dtype_like->dtype));
+  return true;
+}
+
+Array<Tensor> CastLikeCompute(const Attrs& attrs,
+                              const Array<Tensor>& inputs,
+                              const Type& out_type,
+                              const Target& target) {
+  return { topi::cast(inputs[0], inputs[1]->dtype) };
+}
+
+Expr MakeCastLike(Expr data,
+                  Expr dtype_like) {
+  static const Op& op = Op::Get("cast_like");
+  return CallNode::make(op, {data, dtype_like}, Attrs(), {});
+}
+
+TVM_REGISTER_API("relay._make.cast_like")
+.set_body_typed(MakeCastLike);
+
+RELAY_REGISTER_OP("cast_like")
+.describe(R"code(Cast the data into the type of another tensor.
+
+)code" TVM_ADD_FILELINE)
+.set_num_inputs(2)
+.add_argument("data", "Tensor", "The input tensor.")
+.add_argument("dtype_like", "Tensor", "The tensor to cast to.")
+.set_support_level(3)
+.add_type_rel("CastLike", CastLikeRel)
+.set_attr<FTVMCompute>("FTVMCompute", CastLikeCompute)
+.set_attr<TOpPattern>("TOpPattern", kElemWise)
+.set_attr<FInferCorrectLayout>("FInferCorrectLayout", ElemwiseArbitraryLayout);
+
 // relay.expand_dims
 TVM_REGISTER_NODE_TYPE(ExpandDimsAttrs);
 
@@ -855,6 +908,43 @@ Examples::
 .set_support_level(3)
 .add_type_rel("Take", TakeRel)
 .set_attr<FTVMCompute>("FTVMCompute", TakeCompute)
+.set_attr<TOpPattern>("TOpPattern", kInjective);
+
+bool EmbedLikeRel(const Array<Type>& types,
+                  int num_inputs,
+                  const Attrs& attrs,
+                  const TypeReporter& reporter) {
+  // `types` contains: [data, indices, type_like, result]
+  CHECK_EQ(types.size(), 4);
+  reporter->Assign(types[3], types[2]);
+  return TakeRel({types[2], types[1], types[0]}, 2, attrs, reporter);
+}
+
+Expr MakeEmbedLike(Expr data,
+                   Expr indices,
+                   Expr type_like,
+                   Integer axis,
+                   std::string mode) {
+  auto attrs = make_node<TakeAttrs>();
+  attrs->axis = std::move(axis);
+  attrs->mode = std::move(mode);
+  static const Op& op = Op::Get("embed_like");
+  return CallNode::make(op, {data, indices, type_like}, Attrs(attrs), {});
+}
+
+TVM_REGISTER_API("relay.op._make.embed_like")
+.set_body_typed(MakeEmbedLike);
+
+RELAY_REGISTER_OP("embed_like")
+.describe(R"code(The inverse of take.)code" TVM_ADD_FILELINE)
+.set_attrs_type_key("relay.attrs.TakeAttrs")
+.set_num_inputs(3)
+.add_argument("data", "Tensor", "The input tensor.")
+.add_argument("indices", "Tensor", "The indices tensor.")
+.add_argument("type_like", "Tensor", "The tensor that provide the type and shape to embed into.")
+.set_support_level(3)
+.add_type_rel("EmbedLike", EmbedLikeRel)
+.set_attr<FTVMCompute>("FTVMCompute", TakeCompute) // implement this at python side?
 .set_attr<TOpPattern>("TOpPattern", kInjective);
 
 
