@@ -91,13 +91,54 @@ else:
 # Get execution context from remote
 ctx = remote.ext_dev(0) if device == "vta" else remote.cpu(0)
 
+from tvm.relay import ExprVisitor
+
+def analyze_vta(expr):
+    assert isinstance(expr, relay.Function)
+
+    vta_nodes = set()
+    progress = True
+
+    def add(expr):
+        nonlocal progress
+        if expr not in vta_nodes:
+            vta_nodes.add(expr)
+            progress = True
+
+    class VtaAnalyze(ExprVisitor):
+        def visit_call(self, expr):
+            if isinstance(expr.op, relay.Op):
+                if expr.op.name == 'nn.dense':
+                    add(expr)
+                    for arg in expr.args:
+                        add(arg)
+                elif expr.op.name == 'add' and all([arg in vta_nodes for arg in expr.args]):
+                    add(expr)
+            super().visit_call(expr)
+
+        def visit_let(self, expr):
+            if expr.value in vta_nodes:
+                add(expr.var)
+            super().visit_let(expr)
+
+    for param in expr.params:
+        if isinstance(param.checked_type, relay.TensorType):
+            vta_nodes.add(param)
+    while progress:
+        progress = False
+        VtaAnalyze().visit(expr)
+    return vta_nodes
+
+
 treelstm = TreeLSTM(input_size=128, memory_size=256, dtype="int32")
 mod = treelstm.mod
-mod["main"] = treelstm.get()
 mod = ToANormalForm()(mod)
 mod = PartialEvaluate()(mod)
 mod = DeadCodeElimination()(mod)
-print(mod["main"])
+mod["main"] = treelstm.get()
+import pprint
+pprint.pprint(analyze_vta(mod["f_0"]))
+
 raise
 # Load pre-configured AutoTVM schedules
 with autotvm.tophub.context(target):
