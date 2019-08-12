@@ -122,7 +122,7 @@ def get_shape(expr):
 
 
 class Config:
-    def __init__(self, n=1, i=8):
+    def __init__(self, n=1, i=16):
         self.n = n
         self.i = i
         self.o = i
