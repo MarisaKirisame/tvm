@@ -177,15 +177,9 @@ with autotvm.tophub.context(target):
     # Compile Relay program with AlterOpLayout disabled
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
         if target.device_name != "vta":
-            graph, lib, params = relay.build(
-                relay_prog, target=target,
-                params=params, target_host=env.target_host)
             f = aot.compile(relay_prog, relay.Module(), ctx, target)
         else:
             with vta.build_config():
-                graph, lib, params = relay.build(
-                    relay_prog, target=target,
-                    params=params, target_host=env.target_host)
                 f = aot.compile(relay_prog, relay.Module(), ctx, target)
 
     # Measure Relay build time
@@ -194,9 +188,9 @@ with autotvm.tophub.context(target):
 
     # Send the inference library over to the remote RPC server
     temp = util.tempdir()
-    lib.save(temp.relpath("graphlib.o"))
-    remote.upload(temp.relpath("graphlib.o"))
-    lib = remote.load_module("graphlib.o")
+    #lib.save(temp.relpath("graphlib.o"))
+    #remote.upload(temp.relpath("graphlib.o"))
+    #lib = remote.load_module("graphlib.o")
 
     # Graph runtime
     # m = graph_runtime.create(graph, lib, ctx)

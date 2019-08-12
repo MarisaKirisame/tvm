@@ -29,7 +29,7 @@ import tvm
 from tvm import rpc, autotvm, relay
 from tvm.contrib import graph_runtime, util, download
 from tvm.contrib.debugger import debug_runtime
-from tvm.relay.transform import PartialEvaluate, ToANormalForm, DeadCodeElimination
+from tvm.relay.transform import PartialEvaluate, ToANormalForm, DeadCodeElimination, ToGraphNormalForm, FuseOps
 
 import vta
 from vta.testing import simulator
@@ -415,6 +415,7 @@ def rewrite_vta(expr, expr_layouts, ops_result_layouts, config=None):
 
 treelstm = TreeLSTM(input_size=128, memory_size=256, dtype="int8")
 mod = treelstm.mod
+p = treelstm.p
 mod = ToANormalForm()(mod)
 mod = PartialEvaluate()(mod)
 mod = DeadCodeElimination()(mod)
@@ -426,43 +427,70 @@ print(mod["f_0"])
 expr_layouts, ops_result_layouts = layout_vta(mod["f_0"])
 rewritten_f0 = rewrite_vta(mod["f_0"], expr_layouts, ops_result_layouts)
 mod["f_0"] = rewritten_f0
-rewritten_f0 = mod["f_0"]
-print(rewritten_f0)
+#mod = ToGraphNormalForm()(mod)
+#mod = FuseOps()(mod)
+#mod = ToANormalForm()(mod)
 
 # Load pre-configured AutoTVM schedules
 with autotvm.tophub.context(target):
-    def get_f():
-        f = aot.compile(mod["main"], mod, ctx, target)
-
     # Compile Relay program with AlterOpLayout disabled
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        if target.device_name != "vta":
-            f = get_f()
-        else:
-            with vta.build_config():
-                f = get_f()
+        assert target.device_name == "vta"
+        with vta.build_config():
+            f = aot.compile(mod["main"], mod, ctx, target)
 
-    # Send the inference library over to the remote RPC server
-    temp = util.tempdir()
-    lib.save(temp.relpath("graphlib.o"))
-    remote.upload(temp.relpath("graphlib.o"))
-    lib = remote.load_module("graphlib.o")
+import torch
+import tvm
+from tvm import relay
+from tvm.relay.backend.interpreter import Value, TupleValue, ConstructorValue, TensorValue
+from tvm.relay import testing, create_executor, Constructor
+from tvm.relay.prelude import Prelude
 
-raise
-if env.TARGET in ["sim", "tsim"]:
-    simulator.clear_stats()
-    tvm_output = f(image)
-    # timer()
-    sim_stats = simulator.stats()
-    print("\nExecution statistics:")
-    for k, v in sim_stats.items():
-        # Since we execute the workload many times, we need to normalize stats
-        # Note that there is always one warm up run
-        # Therefore we divide the overall stats by (num * rep + 1)
-        print("\t{:<16}: {:>16}".format(k, v // (num * rep + 1)))
-else:
-    tcost = timer()
-    std = np.std(tcost.results) * 1000
-    mean = tcost.mean * 1000
-    print("\nPerformed inference in %.2fms (std = %.2f) for %d samples" % (mean, std, env.BATCH))
-    print("Average per sample inference time: %.2fms" % (mean/env.BATCH))
+class RoseTree:
+    def __init__(self, head, children):
+        self.head = head
+        self.children = children
+
+    def __str__(self):
+        return "Tree(" + str(self.head) + ", " + str(self.children) + ")"
+
+    def __repr__(self):
+        return self.__str__()
+
+    def fmap(self, f):
+        return RoseTree(f(self.head), [x.fmap(f) for x in self.children])
+
+    def size(self):
+        return 1 + sum([x.size() for x in self.children])
+
+def rand_tree(depth=3, branch=3):
+    shape = (1, 128)
+    head = np.random.normal(0, 100, shape).astype("int8")
+    children = [rand_tree(depth-1, branch) for x in range(0 if depth == 0 else branch)]
+    return RoseTree(head, children)
+
+# creates relay list from a list
+def from_list(p, l):
+    if len(l) == 0:
+        return (p.nil,)
+    else:
+        return (p.cons, l[0], from_list(p, l[1:]))
+
+def from_tree(p, rt):
+    return (p.rose,
+            rt.head,
+            from_list(p, [from_tree(p, x) for x in rt.children]))
+
+
+assert env.TARGET in ["sim", "tsim"]
+simulator.clear_stats()
+
+tvm_output = f(from_tree(p, rand_tree()))
+# timer()
+sim_stats = simulator.stats()
+print("\nExecution statistics:")
+for k, v in sim_stats.items():
+    # Since we execute the workload many times, we need to normalize stats
+    # Note that there is always one warm up run
+    # Therefore we divide the overall stats by (num * rep + 1)
+    print("\t{:<16}: {:>16}".format(k, v))
