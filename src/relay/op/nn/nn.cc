@@ -184,6 +184,14 @@ bool NCncDenseRel(const Array<Type>& types,
   if (data == nullptr) return false;
   if (weight == nullptr) return false;
 
+  const NCncDenseAttrs* param = attrs.as<NCncDenseAttrs>();
+  CHECK(param != nullptr);
+
+  DataType out_dtype = param->out_dtype;
+  if (out_dtype.bits() == 0) {
+    out_dtype = data->dtype;
+  }
+
   CHECK(static_cast<int>(data->shape.size()) == 4);
   CHECK(static_cast<int>(weight->shape.size()) == 4);
   CHECK(reporter->AssertEQ(data->shape[1], weight->shape[1]));
@@ -191,16 +199,19 @@ bool NCncDenseRel(const Array<Type>& types,
   CHECK_EQ(data->dtype, weight->dtype);
 
   Array<tvm::Expr> oshape = {data->shape[0], weight->shape[0], data->shape[2], weight->shape[2]};
-  reporter->Assign(types[2], TensorTypeNode::make(oshape, data->dtype));
+  reporter->Assign(types[2], TensorTypeNode::make(oshape, out_dtype));
   return true;
 }
 
 
 // Positional relay function to create NCncdense operator used by frontend FFI.
 Expr MakeNCncDense(Expr data,
-                   Expr weight) {
+                   Expr weight,
+                   DataType out_dtype) {
   static const Op& op = Op::Get("nn.NCncdense");
-  return CallNode::make(op, {data, weight}, Attrs(), {});
+  auto attrs = make_node<NCncDenseAttrs>();
+  attrs->out_dtype = out_dtype;
+  return CallNode::make(op, {data, weight}, Attrs(attrs), {});
 }
 
 
@@ -216,6 +227,7 @@ RELAY_REGISTER_OP("nn.NCncdense")
 - **out**: `(N, O, n, o)`.
 
 )code" TVM_ADD_FILELINE)
+.set_attrs_type_key("relay.attrs.NCncDenseAttrs")
 .set_num_inputs(2)
 .add_argument("data", "4D Tensor", "Input data.")
 .add_argument("weight", "4D Tensor", "Weight matrix.")

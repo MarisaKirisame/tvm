@@ -118,6 +118,7 @@ def compute_dense(attrs, inputs, out_type, target):
     print("NCncdense inputs: " + str(inputs))
 
     out_dtype = inputs[0].dtype
+    out_dtype = attrs.out_dtype
     if target.device_name == "vta":
         if len(inputs[0].shape) == 4: # this implies the layout is packed
             target = tvm.target.create(target)

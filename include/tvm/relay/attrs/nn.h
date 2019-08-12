@@ -366,6 +366,20 @@ struct DenseAttrs : public tvm::AttrsNode<DenseAttrs> {
   }
 };
 
+
+/*! \brief Attributes for NCncdense operator */
+ struct NCncDenseAttrs : public tvm::AttrsNode<NCncDenseAttrs> {
+   DataType out_dtype;
+
+   TVM_DECLARE_ATTRS(NCncDenseAttrs, "relay.attrs.NCncDenseAttrs") {
+     // use 0 bits to indicate none.
+     TVM_ATTR_FIELD(out_dtype)
+       .set_default(NullValue<DataType>())
+       .describe("Output data type, set to explicit type under mixed precision setting");
+   }
+ };
+
+
 /*! \brief Attributes for sparse_dense operator */
 struct SparseDenseAttrs : public tvm::AttrsNode<SparseDenseAttrs> {
   TVM_DECLARE_ATTRS(SparseDenseAttrs, "relay.attrs.SparseDenseAttrs") {}

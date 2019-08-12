@@ -406,12 +406,14 @@ def rewrite_vta(expr, expr_layouts, ops_result_layouts, config=None):
             return expr
 
         def transform_dense(self, expr, old_shape):
-            return relay.op.nn.NCncdense(expr.args[0], expr.args[1])
+            expr = relay.op.nn.NCncdense(expr.args[0], expr.args[1], out_dtype="int32")
+            expr = relay.op.cast(expr, dtype="int8")
+            return expr
 
     return VtaRewrite().visit(expr)
 
 
-treelstm = TreeLSTM(input_size=128, memory_size=256, dtype="int32")
+treelstm = TreeLSTM(input_size=128, memory_size=256, dtype="int8")
 mod = treelstm.mod
 mod = ToANormalForm()(mod)
 mod = PartialEvaluate()(mod)
