@@ -91,12 +91,37 @@ else:
 # Get execution context from remote
 ctx = remote.ext_dev(0) if device == "vta" else remote.cpu(0)
 
-from tvm.relay import ExprVisitor
+from tvm.relay import ExprMutator, ExprVisitor
+
+class LetList:
+    VAR_COUNTER = 0
+
+    def __init__(self):
+        self.bindings = []
+
+    def push(self, expr, ty=None, bind_var=None):
+        if bind_var is None:
+            bind_var = relay.Var(f'fresh{LetList.VAR_COUNTER}', ty)
+            LetList.VAR_COUNTER += 1
+        self.bindings.append((bind_var, expr))
+        return bind_var
+
+    def get(self, expr):
+        ret = expr
+        for (var, rhs) in reversed(self.bindings):
+            ret = relay.Let(var, rhs, ret)
+        return ret
+
+    def with_ll(func):
+        ll = LetList()
+        return ll.get(func(ll))
+
 
 def analyze_vta(expr):
     assert isinstance(expr, relay.Function)
 
     vta_nodes = set()
+    rhs_let = set()
     progress = True
 
     def add(expr):
@@ -119,15 +144,90 @@ def analyze_vta(expr):
         def visit_let(self, expr):
             if expr.value in vta_nodes:
                 add(expr.var)
+            rhs_let.add(expr.value)
             super().visit_let(expr)
 
     for param in expr.params:
         if isinstance(param.checked_type, relay.TensorType):
             vta_nodes.add(param)
+
     while progress:
         progress = False
         VtaAnalyze().visit(expr)
+
+    # either variable or a call with variable args
+    for expr in vta_nodes:
+        if isinstance(expr, relay.Var):
+            pass
+        elif isinstance(expr, relay.Call):
+            assert(expr in rhs_let)
+            assert(all([isinstance(arg, relay.Var) and arg in vta_nodes for arg in expr.args]))
+        else:
+            assert False
     return vta_nodes
+
+
+def rewrite_vta(expr, vta_nodes):
+    class VtaRewrite(ExprMutator):
+        def __init__(self):
+            self.vta_map = {}
+            super().__init__()
+
+        def visit_let(self, expr):
+            def _with_func(ll):
+                vta_var = ll.push(self.transform_add(expr.value))
+                self.vta_map[expr.value] = vta_var
+                self.vta_map[expr.var] = vta_var
+                return relay.Let(expr.var, self.unpack(vta_var), self.visit(expr.body))
+
+            if isinstance(expr.value, relay.Call) and expr.value in vta_nodes:
+                assert(isinstance(expr.value.op, relay.Op))
+                return LetList.with_ll(_with_func)
+            else:
+                return super().visit_let(expr)
+
+        def visit_function(self, expr):
+            def _with_func(ll):
+                for param in filter(lambda e: e in vta_nodes, expr.params):
+                    self.vta_map[param] = ll.push(self.pack(param))
+                return self.visit(expr.body)
+            return relay.Function(
+                    expr.params,
+                    LetList.with_ll(_with_func),
+                    expr.ret_type,
+                    expr.type_params,
+                    expr.attrs)
+
+        def pack(self, expr):
+            return expr
+
+        def unpack(self, expr):
+            return expr
+
+        def get_vta_map(self, expr):
+            assert expr in self.vta_map
+            return self.vta_map[expr]
+
+        def transform(self, expr):
+            remapped_args = [self.get_vta_map(arg) for arg in expr.args]
+            new_call = relay.Call(expr.op, remapped_args, expr.attrs, expr.type_args)
+            ty = expr.checked_type
+
+            if expr.op.name == 'add':
+                return self.transform_add(new_call, ty)
+            elif expr.op.name == 'nn.dense':
+                return self.transform_dense(new_call, ty)
+            else:
+                raise
+
+        def transform_add(self, expr, ty):
+            return expr
+
+        def transform_dense(self, expr, ty):
+            assert(isinstance(ty, relay.TensorType()))
+            return expr
+
+    return VtaRewrite().visit(expr)
 
 
 treelstm = TreeLSTM(input_size=128, memory_size=256, dtype="int32")
@@ -136,10 +236,14 @@ mod = ToANormalForm()(mod)
 mod = PartialEvaluate()(mod)
 mod = DeadCodeElimination()(mod)
 mod["main"] = treelstm.get()
-import pprint
-pprint.pprint(analyze_vta(mod["f_0"]))
 
-raise
+import pprint
+
+vta_nodes = analyze_vta(mod["f_0"])
+rewritten_f0 = rewrite_vta(mod["f_0"], vta_nodes)
+print(rewritten_f0)
+
+raise "FARTS"
 # Load pre-configured AutoTVM schedules
 with autotvm.tophub.context(target):
     # Perform graph packing and constant folding for VTA target
