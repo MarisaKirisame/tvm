@@ -593,6 +593,30 @@ def dense(data, weight, units=None, out_dtype=""):
     return _make.dense(data, weight, units, out_dtype)
 
 
+def NCncdense(data, weight):
+    """Dense operator.
+    Applies a linear transformation in NCnc format.
+
+    .. math::
+
+    `Y = X * W`
+
+    Parameters
+    ----------
+    data : tvm.relay.Expr
+        The input data to the operator.
+
+    weight : tvm.relay.Expr
+        The weight expressions.
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The computed result.
+    """
+    return _make.NCncdense(data, weight)
+
+
 def relu(data):
     """Rectified linear unit.
 

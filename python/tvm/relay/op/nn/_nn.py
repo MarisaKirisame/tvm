@@ -68,6 +68,15 @@ def schedule_dense(attrs, outputs, target):
 
 reg.register_pattern("nn.dense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
+@reg.register_schedule("nn.NCncdense")
+def schedule_dense(attrs, outputs, target):
+    """Schedule definition of NCncdense"""
+    with target:
+        return topi.generic.schedule_dense(outputs)
+
+
+reg.register_pattern("nn.NCncdense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
 
 # batch_matmul
 @reg.register_compute("nn.batch_matmul")

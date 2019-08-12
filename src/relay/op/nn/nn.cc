@@ -173,6 +173,55 @@ RELAY_REGISTER_OP("nn.dense")
 .set_support_level(1)
 .add_type_rel("Dense", DenseRel);
 
+
+bool NCncDenseRel(const Array<Type>& types,
+                  int num_inputs,
+                  const Attrs& attrs,
+                  const TypeReporter& reporter) {
+  CHECK_EQ(types.size(), 3);
+  const auto* data = types[0].as<TensorTypeNode>();
+  const auto* weight = types[1].as<TensorTypeNode>();
+  if (data == nullptr) return false;
+  if (weight == nullptr) return false;
+
+  CHECK(static_cast<int>(data->shape.size()) == 4);
+  CHECK(static_cast<int>(weight->shape.size()) == 4);
+  CHECK(reporter->AssertEQ(data->shape[1], weight->shape[1]));
+  CHECK(reporter->AssertEQ(data->shape[3], weight->shape[3]));
+  CHECK_EQ(data->dtype, weight->dtype);
+
+  Array<tvm::Expr> oshape = {data->shape[0], weight->shape[0], data->shape[2], weight->shape[2]};
+  reporter->Assign(types[2], TensorTypeNode::make(oshape, data->dtype));
+  return true;
+}
+
+
+// Positional relay function to create NCncdense operator used by frontend FFI.
+Expr MakeNCncDense(Expr data,
+                   Expr weight) {
+  static const Op& op = Op::Get("nn.NCncdense");
+  return CallNode::make(op, {data, weight}, Attrs(), {});
+}
+
+
+TVM_REGISTER_API("relay.op.nn._make.NCncdense")
+.set_body_typed(MakeNCncDense);
+
+
+RELAY_REGISTER_OP("nn.NCncdense")
+.describe(R"code(Applies a linear transformation: :math:`Y = XW^T`.
+
+- **data**: `(N, I, n, i)`
+- **weight**: `(O, I, o, i)`
+- **out**: `(N, O, n, o)`.
+
+)code" TVM_ADD_FILELINE)
+.set_num_inputs(2)
+.add_argument("data", "4D Tensor", "Input data.")
+.add_argument("weight", "4D Tensor", "Weight matrix.")
+.set_support_level(15)
+.add_type_rel("NCncDense", NCncDenseRel);
+
 // relay.leaky_relu
 TVM_REGISTER_NODE_TYPE(LeakyReluAttrs);
 

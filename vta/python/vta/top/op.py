@@ -110,14 +110,16 @@ def schedule_conv2d(attrs, outs, target):
     return _nn.schedule_conv2d(attrs, outs, target)
 
 
-@reg.register_compute("nn.dense", level=15)
+@reg.register_compute("nn.NCncdense", level=15)
 def compute_dense(attrs, inputs, out_type, target):
     """Compute definition of dense"""
-    out_dtype = attrs.out_dtype
-    out_dtype = inputs[0].dtype if out_dtype == "" else out_dtype
+    assert target.device_name == "vta"
+    assert len(inputs[0].shape) == 4
+    print("NCncdense inputs: " + str(inputs))
 
+    out_dtype = inputs[0].dtype
     if target.device_name == "vta":
-        if inputs[0].shape == 4: # this implies the layout is packed
+        if len(inputs[0].shape) == 4: # this implies the layout is packed
             target = tvm.target.create(target)
             return [topi.nn.dense(inputs[0], inputs[1], None, out_dtype)]
         # If it's not packed, run on ARM CPU
@@ -128,11 +130,15 @@ def compute_dense(attrs, inputs, out_type, target):
     return _nn.compute_dense(attrs, inputs, out_type, target)
 
 
-@reg.register_schedule("nn.dense", level=15)
+@reg.register_schedule("nn.NCncdense", level=15)
 def schedule_dense(attrs, outs, target):
     """Schedule definition of dense"""
+    assert target.device_name == "vta"
+    assert len(outs[0].shape) == 4
+    print("NCncdense outputs: " + str(outs))
+
     if target.device_name == "vta":
-        if outs[0].shape == 4: # this implies the layout is packed
+        if len(outs[0].shape) == 4: # this implies the layout is packed
             target = tvm.target.create(target)
             assert target.device_name == "vta"
             return topi.generic.schedule_dense(outs)
