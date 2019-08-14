@@ -485,12 +485,12 @@ def from_tree(p, rt):
 assert env.TARGET in ["sim", "tsim"]
 simulator.clear_stats()
 
-tvm_output = f(from_tree(p, rand_tree()))
-# timer()
-sim_stats = simulator.stats()
-print("\nExecution statistics:")
-for k, v in sim_stats.items():
-    # Since we execute the workload many times, we need to normalize stats
-    # Note that there is always one warm up run
-    # Therefore we divide the overall stats by (num * rep + 1)
-    print("\t{:<16}: {:>16}".format(k, v))
+def run():
+    tvm_output = f(from_tree(p, rand_tree()))
+    sim_stats = simulator.stats()
+    print("\nExecution statistics:")
+    for k, v in sim_stats.items():
+        # Since we execute the workload many times, we need to normalize stats
+        # Note that there is always one warm up run
+        # Therefore we divide the overall stats by (num * rep + 1)
+        print("\t{:<16}: {:>16}".format(k, v))
