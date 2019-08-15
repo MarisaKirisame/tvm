@@ -16,14 +16,11 @@
 # under the License.
 from __future__ import absolute_import, print_function
 
-import argparse, json, os, requests, time
+import argparse, json, os, time
 from io import BytesIO
 from os.path import join, isfile
-from PIL import Image
 
-from mxnet.gluon.model_zoo import vision
 import numpy as np
-from matplotlib import pyplot as plt
 
 import tvm
 from tvm import rpc, autotvm, relay
@@ -37,60 +34,15 @@ from vta.top import graph_pack, GraphPack
 import aot
 import network
 from network.tlstm import TreeLSTM
-
-# Make sure that TVM was compiled with RPC=1
-assert tvm.module.enabled("rpc")
+import tvm.ndarray as ndarray
 
 env = vta.get_env()
 
 device = "vta"
+device = "cpu"
 target = env.target if device == "vta" else env.target_vta_cpu
 
-# The ``start_pack`` and ``stop_pack`` labels indicate where
-# to start and end the graph packing relay pass: in other words
-# where to start and finish offloading to VTA.
-model = "tree_lstm"
-start_pack="nn.max_pool2d"
-stop_pack="nn.global_avg_pool2d"
-
-######################################################################
-# Obtain an execution remote
-# ---------------------------------
-# When target is 'pynq', reconfigure FPGA and runtime.
-# Otherwise, if target is 'sim', execute locally.
-if env.TARGET not in ["sim", "tsim"]:
-
-    # Get remote from tracker node if environment variable is set.
-    # To set up the tracker, you'll need to follow the "Auto-tuning
-    # a convolutional network for VTA" tutorial.
-    tracker_host = os.environ.get("TVM_TRACKER_HOST", None)
-    tracker_port = os.environ.get("TVM_TRACKER_PORT", None)
-    # Otherwise if you have a device you want to program directly from
-    # the host, make sure you've set the variables below to the IP of
-    # your board.
-    device_host = os.environ.get("VTA_PYNQ_RPC_HOST", "192.168.2.99")
-    device_port = os.environ.get("VTA_PYNQ_RPC_PORT", "9091")
-    if not tracker_host or not tracker_port:
-        remote = rpc.connect(device_host, int(device_port))
-    else:
-        remote = autotvm.measure.request_remote(env.TARGET, tracker_host, int(tracker_port), timeout=10000)
-
-    # Reconfigure the JIT runtime and FPGA.
-    # You can program the FPGA with your own custom bitstream
-    # by passing the path to the bitstream file instead of None.
-    reconfig_start = time.time()
-    vta.reconfig_runtime(remote)
-    vta.program_fpga(remote, bitstream=None)
-    reconfig_time = time.time() - reconfig_start
-    print("Reconfigured FPGA and RPC runtime in {0:.2f}s!".format(reconfig_time))
-
-# In simulation mode, host the RPC server locally.
-else:
-    remote = rpc.LocalSession()
-
-# Get execution context from remote
-ctx = remote.ext_dev(0) if device == "vta" else remote.cpu(0)
-
+ctx = ndarray.ext_dev(0) if device == "vta" else ndarray.cpu(0)
 from tvm.relay import ExprMutator, ExprVisitor
 
 class LetList:
@@ -423,10 +375,14 @@ mod["main"] = treelstm.get()
 
 import pprint
 
+if target.device_name == "vta":
+    expr_layouts, ops_result_layouts = layout_vta(mod["f_0"])
+    rewritten_f0 = rewrite_vta(mod["f_0"], expr_layouts, ops_result_layouts)
+    mod["f_0"] = rewritten_f0
+    mod = DeadCodeElimination()(mod)
+
 print(mod["f_0"])
-expr_layouts, ops_result_layouts = layout_vta(mod["f_0"])
-rewritten_f0 = rewrite_vta(mod["f_0"], expr_layouts, ops_result_layouts)
-mod["f_0"] = rewritten_f0
+
 #mod = ToGraphNormalForm()(mod)
 #mod = FuseOps()(mod)
 #mod = ToANormalForm()(mod)
@@ -435,11 +391,12 @@ mod["f_0"] = rewritten_f0
 with autotvm.tophub.context(target):
     # Compile Relay program with AlterOpLayout disabled
     with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
-        assert target.device_name == "vta"
-        with vta.build_config():
-            f = aot.compile(mod["main"], mod, ctx, target)
+        if target.device_name == "vta":
+            with vta.build_config():
+                f = aot.compile(mod["main"], mod, ctx, target, record_time=True)
+        else:
+            f = aot.compile(mod["main"], mod, ctx, target, record_time=True)
 
-import torch
 import tvm
 from tvm import relay
 from tvm.relay.backend.interpreter import Value, TupleValue, ConstructorValue, TensorValue
@@ -482,15 +439,10 @@ def from_tree(p, rt):
             from_list(p, [from_tree(p, x) for x in rt.children]))
 
 
-assert env.TARGET in ["sim", "tsim"]
 simulator.clear_stats()
 
 def run():
     tvm_output = f(from_tree(p, rand_tree()))
-    sim_stats = simulator.stats()
-    print("\nExecution statistics:")
-    for k, v in sim_stats.items():
-        # Since we execute the workload many times, we need to normalize stats
-        # Note that there is always one warm up run
-        # Therefore we divide the overall stats by (num * rep + 1)
-        print("\t{:<16}: {:>16}".format(k, v))
+    print(tvm_output)
+
+run()
