@@ -193,7 +193,7 @@ struct Instruction {
   static Instruction Ret(RegName return_reg);
   /*! \brief Construct a fatal instruction.
    *  \return The fatal instruction.
-   * */  
+   * */
   static Instruction Fatal();
   /*! \brief Construct a invoke packed instruction.
    *  \param packed_index The index of the packed function.

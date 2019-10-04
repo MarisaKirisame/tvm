@@ -247,7 +247,7 @@ def register_shape_func(op_name, data_dependant, shape_func=None, level=10):
         Whether the shape function depends on input data.
 
     shape_func : function (attrs: Attrs, inputs: List[Tensor], out_ndims: List[IndexExpr])
-                 -> shape_tensors: List<Tensor>
+                 -> shape_tensors: List[Tensor]
         The function for computing the dynamic output shapes
 
     level : int
