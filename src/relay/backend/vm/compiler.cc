@@ -486,6 +486,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     auto key = CCacheKeyNode::make(func, target_host_);
     auto cfunc = engine_->LowerShapeFunc(key);
     auto cfunc_index = GetCFuncIndex(cfunc);
+
     // Prepare input and output registers
     std::vector<Index> shape_func_args;
     std::vector<Index> shape_regs;
@@ -503,6 +504,8 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
         }
       }
     }
+
+
     for (auto t : cfunc->outputs) {
       CHECK_GT(t->shape.size(), 0);
       CHECK(t->shape[0].as<IntImm>());
@@ -511,6 +514,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
       shape_func_args.push_back(last_register_);
       shape_regs.push_back(last_register_);
     }
+
 
     int arity = shape_func_args.size();
     int ret_count = shape_regs.size();
@@ -598,7 +602,6 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     return dtt.b;
   }
 
-
   void EmitInvokePrimitive(const Function& func,
                            const std::vector<Index>& arg_registers,
                            const Type& ret_type) {
@@ -661,6 +664,9 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     } else {
       using JITMap = std::map<InlineCacheKey, PackedFunc>;
       auto jit_map = JITMap();
+      Emit(Instruction::InvokePacked(cfunc_index, arity, return_count, unpacked_arg_regs));
+    } else {
+      std::map<InlineCacheKey, PackedFunc> jit_map;
       auto type = Downcast<FuncType>(func->checked_type());
       auto pf = PackedFunc([=](TVMArgs args, TVMRetValue* rv) mutable {
         InlineCacheKey ick;
@@ -668,8 +674,8 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
           NDArray arr = args[i];
           UpdateICK(&ick, arr);
         }
-        tvm::Map<Var, Expr> bindings;
         if (jit_map.count(ick) == 0) {
+          tvm::Map<Var, Expr> bindings;
           auto func_type = Downcast<FuncType>(func->checked_type());
           for (size_t i = 0; i < func->params.size(); ++i) {
             auto int_shape = NDArray(args[i]).Shape();

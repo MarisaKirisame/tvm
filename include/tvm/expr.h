@@ -124,7 +124,7 @@ class Var : public Expr {
  public:
   explicit Var(NodePtr<Node> n) : Expr(n) {}
   TVM_DLL explicit Var(std::string name_hint = "v",
-                       Type t = Int(32));
+                       Type t = Int(64));
   /*!
    * \brief Make a new copy of var with same type, append suffix
    * \param suffix The suffix to be appended.

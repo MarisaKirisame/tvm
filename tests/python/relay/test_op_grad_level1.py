@@ -99,7 +99,7 @@ def test_binary_op():
 
 
 def test_softmax_grad():
-    data = relay.var("data", relay.TensorType((1, 16), "float64"))
+    data = relay.var("data", relay.TensorType((2, 16), "float64"))
     fwd_func = relay.Function([data], relay.nn.softmax(data))
     check_grad(fwd_func, scale=1)
 

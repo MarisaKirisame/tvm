@@ -688,7 +688,7 @@ void VirtualMachine::InvokeGlobal(const VMFunction& func, const std::vector<Obje
   for (size_t i = 0; i < args.size(); ++i) {
     WriteRegister(i, args[i]);
   }
-  DLOG(INFO) << "func.params= " << func.params.size();
+  DLOG(INFO) << "func.params= " << func.params.size() << std::endl;
 
   code = func.instructions.data();
   pc = 0;
@@ -700,13 +700,13 @@ ObjectRef VirtualMachine::Invoke(const VMFunction& func, const std::vector<Objec
   InvokeGlobal(func, args);
   RunLoop();
   auto alloc = MemoryManager::Global()->GetAllocator(ctxs[0]);
-  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B";
+  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B" << std::endl;
   return return_register;
 }
 
 ObjectRef VirtualMachine::Invoke(const std::string& name, const std::vector<ObjectRef>& args) {
   auto func_index = this->global_map[name];
-  DLOG(INFO) << "Invoke Global " << name << " at index " << func_index;
+  DLOG(INFO) << "Invoke Global " << name << " at index " << func_index << std::endl;
   return Invoke(this->functions[func_index], args);
 }
 
@@ -757,6 +757,7 @@ void VirtualMachine::Init(const std::vector<TVMContext>& ctxs) {
     if (packed_funcs.size() <= packed_index) {
       packed_funcs.resize(packed_index + 1);
     }
+    CHECK(packed_funcs[packed_index] == nullptr) << "packed index already registered: " << packed_index;
     packed_funcs[packed_index] = lib.GetFunction(packed_name);
   }
 }
@@ -804,7 +805,7 @@ void VirtualMachine::RunLoop() {
   while (true) {
   main_loop:
     auto const& instr = this->code[this->pc];
-    DLOG(INFO) << "Executing(" << pc << "): " << instr;
+    DLOG(INFO) << "Executing(" << pc << "): " << instr << std::endl;
 #if USE_RELAY_DEBUG
     std::cout << instr << std::endl;
 #endif  // USE_RELAY_DEBUG

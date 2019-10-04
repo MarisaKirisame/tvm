@@ -68,6 +68,8 @@ bool IsDynamic(const Type& ty) {
   return v.is_dyn;
 }
 
+auto ShapeDType = Int(64);
+
 Array<IndexExpr> GetShape(const Array<IndexExpr>& shape) {
   // for now, we always use int32 shape when possible
   // even if the result of shape inference becomes int64.
@@ -77,7 +79,7 @@ Array<IndexExpr> GetShape(const Array<IndexExpr>& shape) {
     if (pval != nullptr) {
       CHECK_LE(pval[0], std::numeric_limits<int32_t>::max());
       CHECK_GE(pval[0], std::numeric_limits<int32_t>::min());
-      res.push_back(ir::IntImm::make(Int(32), *pval));
+      res.push_back(ir::IntImm::make(ShapeDType, *pval));
     } else if (val->is_type<ir::Any>()) {
       res.push_back(val.as<ir::Any>()->ToVar());
     } else {
@@ -347,7 +349,7 @@ class MakeShapeFunc : public ExprFunctor<Array<Tensor>(const Expr&)> {
         if (ndim > 0) {
           sshape.push_back(tvm::Integer(ndim));
         }
-        tvm::Tensor shape_tensor = tvm::placeholder(sshape, Int(64));
+        tvm::Tensor shape_tensor = tvm::placeholder(sshape, ShapeDType);
         shape_inputs.push_back(shape_tensor);
       };
 
@@ -383,7 +385,7 @@ class MakeShapeFunc : public ExprFunctor<Array<Tensor>(const Expr&)> {
     // set inputs
     for (auto param : prim_func->params) {
       int state = param_states_[param];
-      cache_node->shape_func_param_states.push_back(IntImm::make(Int(32), state));
+      cache_node->shape_func_param_states.push_back(IntImm::make(ShapeDType, state));
       if (state & kNeedInputData) {
         for (auto t : param_data_[param]) {
           cache_node->inputs.push_back(t);
@@ -474,7 +476,7 @@ class MakeShapeFunc : public ExprFunctor<Array<Tensor>(const Expr&)> {
       return {value};
     } else {
       Tensor value = tvm::compute({}, [&](const Array<tvm::Var>&) {
-          return make_const(Int(64), 0);
+          return make_const(ShapeDType, 0);
       }, "shape_const", topi::kBroadcast);
       scalars_.push_back(value);
       return {value};
@@ -516,7 +518,7 @@ class MakeShapeFunc : public ExprFunctor<Array<Tensor>(const Expr&)> {
     auto ret_type = call_node->checked_type();
     Array<IndexExpr> out_ndims;
     if (const auto* ttype = ret_type.as<TensorTypeNode>()) {
-      out_ndims.push_back(IntImm::make(Int(32), ttype->shape.size()));
+      out_ndims.push_back(IntImm::make(ShapeDType, ttype->shape.size()));
     } else {
       auto rtype = ret_type.as<TupleTypeNode>();
       // TODO(@icemelon): Allow recursive tuple
@@ -524,7 +526,7 @@ class MakeShapeFunc : public ExprFunctor<Array<Tensor>(const Expr&)> {
       for (size_t i = 0; i < rtype->fields.size(); ++i) {
         auto ttype = rtype->fields[i].as<TensorTypeNode>();
         CHECK(ttype);
-        out_ndims.push_back(IntImm::make(Int(32), ttype->shape.size()));
+        out_ndims.push_back(IntImm::make(ShapeDType, ttype->shape.size()));
       }
     }
     // Call shape function
@@ -640,7 +642,7 @@ class CompileEngineImpl : public CompileEngineNode {
       value->use_count = 0;
       cache_[key] = value;
     }
-    // Enforce use the target.
+    // Enforce use of the target.
     With<Target> target_scope(key->target);
 
     CHECK(!value->cached_func.defined());

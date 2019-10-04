@@ -25,6 +25,7 @@ from ..expr import Expr
 from ...api import register_func
 from ...build_module import lower, build
 from . import _make
+from ...hybrid import script
 
 @register_relay_node
 class Op(Expr):
@@ -244,6 +245,7 @@ def register_gradient(op_name, fgradient=None, level=10):
     """
     return register(op_name, "FPrimalGradient", fgradient, level)
 
+
 def register_shape_func(op_name, data_dependant, shape_func=None, level=10):
     """Register operator shape function for an op.
 
@@ -256,7 +258,7 @@ def register_shape_func(op_name, data_dependant, shape_func=None, level=10):
         Whether the shape function depends on input data.
 
     shape_func : function (attrs: Attrs, inputs: List[Tensor], out_ndims: List[IndexExpr])
-                 -> shape_tensors: List<Tensor>
+                 -> shape_tensors: List[Tensor]
         The function for computing the dynamic output shapes
 
     level : int
@@ -302,3 +304,72 @@ def debug(expr, debug_func=None):
         name = ''
 
     return _make.debug(expr, name)
+
+
+# shape func
+@script
+def _broadcast_shape_func(x, y, ndim):
+    out = output_tensor((ndim,), x.dtype)
+    if len(x.shape) == 0:
+        for i in const_range(ndim):
+            out[i] = y[i]
+    elif len(y.shape) == 0:
+        for i in const_range(ndim):
+            out[i] = x[i]
+    else:
+        ndim1 = x.shape[0]
+        ndim2 = y.shape[0]
+        for i in const_range(1, min(ndim1, ndim2)+1):
+            if x[ndim1-i] == y[ndim2-i]:
+                out[ndim-i] = x[ndim1-i]
+            elif x[ndim1-i] == 1:
+                out[ndim-i] = y[ndim2-i]
+            else:
+                assert y[ndim2 - i] == 1, "Incompatible broadcast type %s and %s" % (
+                    x[ndim1-i], y[ndim2-i])
+                out[ndim-i] = x[ndim1-i]
+        for i in const_range(min(ndim1, ndim2)+1, ndim+1):
+            if ndim1 >= ndim2:
+                out[ndim-i] = x[ndim1-i]
+            else:
+                out[ndim-i] = y[ndim2-i]
+    return out
+
+def broadcast_shape_func(attrs, inputs, out_ndims):
+    return [_broadcast_shape_func(*inputs, out_ndims[0])]
+
+@script
+def _identity_shape_func(x, ndim):
+    out = output_tensor(x.shape, x.dtype)
+    for i in const_range(0, ndim):
+        out[i] = x[i]
+    return out
+
+def identity_shape_func(_, args, ndims):
+    (x,) = args
+    (ndim,) = ndims
+    assert int(x.shape[0]) == int(ndim)
+    return [_identity_shape_func(x, ndim)]
+
+@script
+def _return_scalar_shape_func(x):
+    out = output_tensor((0,), x.dtype)
+    return out
+
+def return_scalar_shape_func(_, args, ndims):
+    return [_return_scalar_shape_func(args[0])]
+
+@script
+def _reduce_shape_func(axis, x, ndim):
+    out = output_tensor(x.shape, x.dtype)
+    for i in const_range(0, ndim):
+        out[i] = x[i]
+    out[axis] = 1
+    return out
+
+def reduce_shape_func(attrs, args, ndims):
+    assert not attrs.exclude
+    assert attrs.keepdims
+    (axis,) = attrs.axis
+    assert args[0].dtype == "int32"
+    return [_reduce_shape_func(axis, args[0], ndims[0])]
