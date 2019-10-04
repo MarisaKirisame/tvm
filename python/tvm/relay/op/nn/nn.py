@@ -1777,3 +1777,6 @@ def cross_entropy(predictions, targets):
       The computed result.
     """
     return _make.cross_entropy(predictions, targets)
+
+def cross_entropy_with_logits(predictions, targets):
+    return _make.cross_entropy_with_logits(predictions, targets)

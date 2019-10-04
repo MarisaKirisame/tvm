@@ -792,8 +792,7 @@ void EnsureCheckedType(const Expr& e) {
 }
 
 Expr InferType(const Expr& expr, const Module& mod) {
-  auto main = mod->GetGlobalVar("main");
-  auto inferencer = TypeInferencer(mod, main);
+  auto inferencer = TypeInferencer(mod, GlobalVar());
   auto e = inferencer.Infer(expr);
   CHECK(WellFormed(e));
   auto free_tvars = FreeTypeVars(e, mod);

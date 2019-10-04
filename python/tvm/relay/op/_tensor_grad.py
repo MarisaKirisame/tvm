@@ -101,7 +101,7 @@ def sigmoid_grad(orig, grad):
 @register_gradient("tanh")
 def tanh_grad(orig, grad):
     """Returns grad * (1 - tanh(x) * tanh(x))."""
-    return [grad * ones_like(orig) - orig * orig]
+    return [grad * (ones_like(orig) - orig * orig)]
 
 
 @register_gradient("nn.relu")
@@ -326,8 +326,11 @@ def bias_add_grad(orig, grad):
 def dense_grad(orig, grad):
     """Returns [grad' @ weight, data @ grad']"""
     data, weight = orig.args
-    return [collapse_sum_like(transpose(grad) * weight, data),
-            collapse_sum_like(data * transpose(grad), weight)]
+    # data: [a, b]
+    # weight: [c, b]
+    # grad: [a, c]
+    return [collapse_sum_like(_nn.dense(grad, transpose(weight)), data),
+            collapse_sum_like(_nn.dense(transpose(grad), transpose(data)), weight)]
 
 
 @register_gradient("reshape")
@@ -383,3 +386,12 @@ def cross_entropy_grad(orig, grad):
     batch_size = take(shape, const(0, dtype='int32'), axis=0)
     grad = grad / batch_size.astype('float32')
     return [-grad * y / x, -grad * log(x)]
+
+
+@register_gradient("nn.cross_entropy_with_logits")
+def cross_entropy_with_logits_grad(orig, grad):
+    x, y = orig.args
+    shape = shape_of(x)
+    batch_size = take(shape, const(0, dtype='int32'), axis=0)
+    grad = grad / batch_size.astype('float32')
+    return [-grad * y, -grad * x]
