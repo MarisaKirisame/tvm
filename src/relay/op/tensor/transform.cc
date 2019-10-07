@@ -187,6 +187,7 @@ RELAY_REGISTER_OP("reinterpret")
     .set_attr<TOpPattern>("TOpPattern", kElemWise)
     .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ElemwiseArbitraryLayout);
 
+
 // relay.expand_dims
 TVM_REGISTER_NODE_TYPE(ExpandDimsAttrs);
 
@@ -956,6 +957,43 @@ Examples::
 .set_support_level(3)
 .add_type_rel("Take", TakeRel)
 .set_attr<FTVMCompute>("FTVMCompute", TakeCompute)
+.set_attr<TOpPattern>("TOpPattern", kInjective);
+
+bool EmbedLikeRel(const Array<Type>& types,
+                  int num_inputs,
+                  const Attrs& attrs,
+                  const TypeReporter& reporter) {
+  // `types` contains: [data, indices, type_like, result]
+  CHECK_EQ(types.size(), 4);
+  reporter->Assign(types[3], types[2]);
+  return TakeRel({types[2], types[1], types[0]}, 2, attrs, reporter);
+}
+
+Expr MakeEmbedLike(Expr data,
+                   Expr indices,
+                   Expr type_like,
+                   Integer axis,
+                   std::string mode) {
+  auto attrs = make_node<TakeAttrs>();
+  attrs->axis = std::move(axis);
+  attrs->mode = std::move(mode);
+  static const Op& op = Op::Get("embed_like");
+  return CallNode::make(op, {data, indices, type_like}, Attrs(attrs), {});
+}
+
+TVM_REGISTER_API("relay.op._make.embed_like")
+.set_body_typed(MakeEmbedLike);
+
+RELAY_REGISTER_OP("embed_like")
+.describe(R"code(The inverse of take.)code" TVM_ADD_FILELINE)
+.set_attrs_type_key("relay.attrs.TakeAttrs")
+.set_num_inputs(3)
+.add_argument("data", "Tensor", "The input tensor.")
+.add_argument("indices", "Tensor", "The indices tensor.")
+.add_argument("type_like", "Tensor", "The tensor that provide the type and shape to embed into.")
+.set_support_level(3)
+.add_type_rel("EmbedLike", EmbedLikeRel)
+.set_attr<FTVMCompute>("FTVMCompute", TakeCompute) // implement this at python side?
 .set_attr<TOpPattern>("TOpPattern", kInjective);
 
 
