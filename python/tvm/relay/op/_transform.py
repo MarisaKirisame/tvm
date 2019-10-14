@@ -33,6 +33,10 @@ schedule_concatenate = _reg.schedule_concatenate
 
 _reg.register_schedule("collapse_sum_like", _schedule_reduce)
 _reg.register_is_stateful("collapse_sum_like", False)
+_reg.register_dynamic_compute("collapse_sum_like", False)
+@_reg.register_shape_func("collapse_sum_like", False)
+def collapse_sum_like_shape_func(_, args, ndims):
+    return [_reg._identity_shape_func(args[1], ndims[0])]
 _reg.register_schedule("broadcast_to", schedule_broadcast)
 _reg.register_schedule("broadcast_to_like", schedule_broadcast)
 _reg.register_schedule("expand_dims", schedule_broadcast)
@@ -59,8 +63,29 @@ _reg.register_dynamic_compute("take", True)
 _reg.register_is_stateful("take", False)
 _reg.register_schedule("transpose", schedule_injective)
 _reg.register_is_stateful("transpose", False)
+_reg.register_dynamic_compute("transpose", True)
+
+@script
+def _transpose_shape_func(x, ndim):
+    out = output_tensor((ndim,), "int64")
+    out[1] = x[0]
+    out[0] = x[1]
+    return out
+
+@_reg.register_shape_func("transpose", False)
+def transpose_shape_func(attrs, args, ndims):
+    (x,) = args
+    (ndim,) = ndims
+    assert int(ndim) == 2
+    assert int(x.shape[0]) == int(ndim)
+    return [_transpose_shape_func(x, ndim)]
+
 _reg.register_schedule("where", schedule_broadcast)
 _reg.register_is_stateful("where", False)
+_reg.register_dynamic_compute("where", True)
+@_reg.register_shape_func("where", False)
+def where_shape_func(attrs, args, ndims):
+    return [_reg._identity_shape_func(args[0], ndims[0])]
 _reg.register_schedule("stack", schedule_injective)
 _reg.register_schedule("concatenate", schedule_concatenate)
 _reg.register_schedule("_contrib_reverse_reshape", schedule_injective)

@@ -683,31 +683,31 @@ Index VirtualMachine::PopFrame() {
 }
 
 void VirtualMachine::InvokeGlobal(const VMFunction& func, const std::vector<Object>& args) {
-  DLOG(INFO) << "Invoking global " << func.name << " " << args.size();
+  DLOG(INFO) << "Invoking global " << func.name << " " << args.size() << std::endl;
 
   PushFrame(func.params.size(), this->pc + 1, func);
   for (size_t i = 0; i < args.size(); ++i) {
     WriteRegister(i, args[i]);
   }
-  DLOG(INFO) << "func.params= " << func.params.size();
+  DLOG(INFO) << "func.params= " << func.params.size() << std::endl;
 
   code = func.instructions.data();
   pc = 0;
 }
 
 Object VirtualMachine::Invoke(const VMFunction& func, const std::vector<Object>& args) {
-  DLOG(INFO) << "Executing Function: " << std::endl << func;
+  DLOG(INFO) << "Executing Function: " << func << std::endl;
 
   InvokeGlobal(func, args);
   RunLoop();
   auto alloc = MemoryManager::Global()->GetAllocator(ctxs[0]);
-  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B";
+  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B" << std::endl;
   return return_register;
 }
 
 Object VirtualMachine::Invoke(const std::string& name, const std::vector<Object>& args) {
   auto func_index = this->global_map[name];
-  DLOG(INFO) << "Invoke Global " << name << " at index " << func_index;
+  DLOG(INFO) << "Invoke Global " << name << " at index " << func_index << std::endl;
   return Invoke(this->functions[func_index], args);
 }
 
@@ -791,9 +791,10 @@ void VirtualMachine::RunLoop() {
   while (true) {
   main_loop:
     auto const& instr = this->code[this->pc];
-    DLOG(INFO) << "Executing(" << pc << "): " << instr;
+    DLOG(INFO) << "Executing(" << pc << "): " << instr << std::endl;
 #if USE_RELAY_DEBUG
     InstructionPrint(std::cout, instr);
+    std::cout << std::endl;
 #endif  // USE_RELAY_DEBUG
 
     switch (instr.op) {
