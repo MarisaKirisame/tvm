@@ -44,6 +44,7 @@
 #include "../../../runtime/vm/naive_allocator.h"
 #include "../../backend/compile_engine.h"
 #include "../../pass/pass_util.h"
+#include "../../ir/type_functor.h"
 #include "compiler.h"
 
 namespace tvm {
@@ -196,13 +197,14 @@ TreeNodePtr BuildDecisionTreeFromClauses(MatchValuePtr data, tvm::Array<Clause> 
 
 class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
  public:
-  VMFunctionCompiler(VMCompilerContext* context, TargetsMap targets, Target target_host)
+  VMFunctionCompiler(VMCompilerContext* context, TargetsMap targets, Target target_host, const std::shared_ptr<VirtualMachine>& vm)
       : last_register_(0),
         registers_num_(0),
         engine_(CompileEngine::Global()),
         context_(context),
         targets_(targets),
-        target_host_(target_host) {}
+        target_host_(target_host),
+        vm_(vm) {}
 
   VMFunction Compile(const GlobalVar& var, const Function& func) {
     size_t i = 0;
@@ -475,6 +477,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
       op_index = context_->seen_funcs[cfunc->funcs[0]];
     }
 
+
     // Prepare input and output registers
     std::vector<Index> shape_func_args;
     std::vector<Index> shape_regs;
@@ -492,12 +495,17 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
         }
       }
     }
+
+
     for (auto t : cfunc->outputs) {
+      CHECK_GT(t->shape.size(), 0);
+      CHECK(t->shape[0].as<IntImm>());
       int64_t ndim = t->shape[0].as<IntImm>()->value;
       Emit(Instruction::AllocTensor({ndim}, t->dtype, NewRegister()));
       shape_func_args.push_back(last_register_);
       shape_regs.push_back(last_register_);
     }
+
 
     int arity = shape_func_args.size();
     int ret_count = shape_regs.size();
@@ -559,23 +567,37 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
   bool IsDynamicCompute(const Expr& e) {
     struct IsDynamicComputeVisitor : ExprVisitor {
       bool b = true;
-      void VisitExpr_(const OpNode* op) {
+      void VisitExpr_(const OpNode* op) override {
         Op OP = GetRef<Op>(op);
         static auto op_dynamic_compute = Op::GetAttr<TOpDynamicCompute>("TOpDynamicCompute");
         CHECK_GT(op_dynamic_compute.count(OP), 0) << "TOpDynamicCompute not registered for " << OP;
         b &= op_dynamic_compute[OP];
       }
-    };
-    IsDynamicComputeVisitor dc;
+    } dc;
     dc(e);
     return dc.b;
+  }
+
+  bool HasDynamicTensorType(const Type& t) {
+    struct HasDynamicTensorTypeVisitor : TypeVisitor {
+      bool b = false;
+      void VisitType_(const TensorTypeNode* op) override {
+        for (const auto& dim : op->shape) {
+          if (! dim.as<tvm::IntImm>()) {
+            b = true;
+          }
+        }
+      }
+    } dtt;
+    dtt(t);
+    return dtt.b;
   }
 
   void EmitInvokePrimitive(const Function& func,
                            const std::vector<Index>& arg_registers,
                            const Type& ret_type) {
 
-    IsDynamicCompute(func);
+    bool need_jit = !IsDynamicCompute(func) && HasDynamicTensorType(func->checked_type());
 
     std::vector<Index> unpacked_arg_regs;
     std::vector<Instruction> allocs;
@@ -623,20 +645,29 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
       // heterogeneous execution.
       LOG(FATAL) << "Currently VM compiler doesn't support heterogeneous compilation";
     }
-    auto key = CCacheKeyNode::make(func, target);
-    auto cfunc = engine_->Lower(key);
-    // TODO(jroesch): support lowered funcs for multiple targets
-    CHECK_EQ(cfunc->funcs.size(), 1);
-    auto op_index = -1;
-    if (context_->seen_funcs.find(cfunc->funcs[0]) == context_->seen_funcs.end()) {
-      op_index = context_->cached_funcs.size();
-      context_->cached_funcs.push_back(cfunc);
-      context_->seen_funcs[cfunc->funcs[0]] = op_index;
-    } else {
-      op_index = context_->seen_funcs[cfunc->funcs[0]];
-    }
 
-    Emit(Instruction::InvokePacked(op_index, arity, return_count, unpacked_arg_regs));
+    if (! need_jit) {
+      auto key = CCacheKeyNode::make(func, target);
+      auto cfunc = engine_->Lower(key);
+      // TODO(jroesch): support lowered funcs for multiple targets
+      CHECK_EQ(cfunc->funcs.size(), 1);
+      auto op_index = -1;
+      if (context_->seen_funcs.find(cfunc->funcs[0]) == context_->seen_funcs.end()) {
+        op_index = context_->cached_funcs.size();
+        context_->cached_funcs.push_back(cfunc);
+        context_->seen_funcs[cfunc->funcs[0]] = op_index;
+      } else {
+        op_index = context_->seen_funcs[cfunc->funcs[0]];
+      }
+
+      Emit(Instruction::InvokePacked(op_index, arity, return_count, unpacked_arg_regs));
+    } else {
+      auto pf = PackedFunc([](TVMArgs args, TVMRetValue* rv) {
+                             std::cout << "meow" << std::endl;
+                             LOG(FATAL) << "meow";
+      });
+      Emit(vm_->InvokeNewPacked(pf, arity, return_count, unpacked_arg_regs));
+    }
 
     if (return_count > 1) {
       // return value is a tuple, we need to create a tuple
@@ -790,6 +821,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
   TargetsMap targets_;
   /*! \brief Host target. */
   Target target_host_;
+  std::shared_ptr<VirtualMachine> vm_;
 };
 
 
@@ -887,7 +919,7 @@ void VMCompiler::Compile(Module mod,
   for (auto named_func : context_.module->functions) {
     auto gvar = named_func.first;
     auto func = named_func.second;
-    VMFunctionCompiler func_compiler(&context_, targets_, target_host_);
+    VMFunctionCompiler func_compiler(&context_, targets_, target_host_, vm_);
     auto vm_func = func_compiler.Compile(gvar, func);
 
     size_t func_index = context_.global_map.at(gvar);

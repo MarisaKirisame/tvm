@@ -18,8 +18,8 @@
 """Backend compiler related feature registration"""
 from __future__ import absolute_import
 import topi
-from .op import register_compute, register_schedule, register_pattern, register_shape_func, register_is_stateful
-from .op import schedule_injective, OpPattern
+from .op import register_compute, register_schedule, register_pattern, register_shape_func, register_is_stateful, register_dynamic_compute
+from .op import schedule_injective, OpPattern, broadcast_shape_func, identity_shape_func
 from ...hybrid import script
 
 schedule_broadcast = schedule_injective
@@ -44,6 +44,8 @@ register_schedule("abs", schedule_broadcast)
 register_schedule("tanh", schedule_broadcast)
 register_schedule("logical_not", schedule_broadcast)
 register_schedule("negative", schedule_broadcast)
+register_shape_func("negative", False, identity_shape_func)
+register_dynamic_compute("negative", True)
 register_schedule("copy", schedule_broadcast)
 
 register_schedule("add", schedule_broadcast)
@@ -65,6 +67,7 @@ register_schedule("minimum", schedule_injective)
 register_schedule("right_shift", schedule_injective)
 register_schedule("left_shift", schedule_injective)
 register_schedule("shape_of", schedule_injective)
+register_dynamic_compute("shape_of", True)
 
 # zeros
 @register_compute("zeros")
@@ -82,6 +85,8 @@ def zeros_like_compute(attrs, inputs, output_type, target):
     return [topi.full_like(inputs[0], 0.0)]
 
 register_schedule("zeros_like", schedule_broadcast)
+register_dynamic_compute("zeros_like", True)
+register_shape_func("zeros_like", False, identity_shape_func)
 
 # ones
 @register_compute("ones")
@@ -99,6 +104,8 @@ def ones_like(attrs, inputs, output_type, target):
     return [topi.full_like(inputs[0], 1.0)]
 
 register_schedule("ones_like", schedule_broadcast)
+register_dynamic_compute("ones_like", True)
+register_shape_func("ones_like", False, identity_shape_func)
 
 # clip
 @register_compute("clip")
@@ -107,38 +114,6 @@ def clip_compute(attrs, inputs, output_type, target):
     return [topi.clip(inputs[0], attrs.a_min, attrs.a_max)]
 
 register_schedule("clip", schedule_elemwise)
-
-# shape func
-@script
-def _broadcast_shape_func(x, y, ndim):
-    out = output_tensor((ndim,), "int64")
-    if len(x.shape) == 0:
-        for i in const_range(ndim):
-            out[i] = y[i]
-    elif len(y.shape) == 0:
-        for i in const_range(ndim):
-            out[i] = x[i]
-    else:
-        ndim1 = x.shape[0]
-        ndim2 = y.shape[0]
-        for i in const_range(1, min(ndim1, ndim2)+1):
-            if x[ndim1-i] == y[ndim2-i]:
-                out[ndim-i] = x[ndim1-i]
-            elif x[ndim1-i] == 1:
-                out[ndim-i] = y[ndim2-i]
-            else:
-                assert y[ndim2 - i] == 1, "Incompatible broadcast type %s and %s" % (
-                    x[ndim1-i], y[ndim2-i])
-                out[ndim-i] = x[ndim1-i]
-        for i in const_range(min(ndim1, ndim2)+1, ndim+1):
-            if ndim1 >= ndim2:
-                out[ndim-i] = x[ndim1-i]
-            else:
-                out[ndim-i] = y[ndim2-i]
-    return out
-
-def broadcast_shape_func(attrs, inputs, out_ndims):
-    return [_broadcast_shape_func(*inputs, out_ndims[0])]
 
 register_shape_func("add", False, broadcast_shape_func)
 register_shape_func("subtract", False, broadcast_shape_func)

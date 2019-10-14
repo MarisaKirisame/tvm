@@ -415,6 +415,19 @@ class VirtualMachine : public runtime::ModuleNode {
     return "VirtualMachine";
   }
 
+  /*! \brief Construct a invoke packed instruction.
+   *  \param pf The PackedFunc.
+   *  \param arity The arity of the function.
+   *  \param output_size The number of outputs of the packed function.
+   *  \param args The argument registers.
+   *  \return The invoke packed instruction.
+   */
+  Instruction InvokeNewPacked(const PackedFunc& pf, Index arity, Index output_size,
+                              const std::vector<RegName>& args) {
+    packed_funcs.push_back(pf);
+    return Instruction::InvokePacked(packed_funcs.size() - 1, arity, output_size, args);
+  }
+
   /*! \brief The runtime module/library that contains generated code. */
   runtime::Module lib;
   /*! \brief The virtual machine's packed function table. */

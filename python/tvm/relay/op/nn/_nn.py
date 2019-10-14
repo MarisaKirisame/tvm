@@ -26,8 +26,11 @@ from ....hybrid import script
 
 # relu
 reg.register_schedule("nn.relu", schedule_injective)
+reg.register_dynamic_compute("nn.relu", True)
 reg.register_pattern("nn.relu", OpPattern.ELEMWISE)
 reg.register_is_stateful("nn.relu", False)
+
+reg.register_shape_func("nn.relu", False, reg.identity_shape_func)
 
 # softmax
 @reg.register_schedule("nn.softmax")
@@ -39,6 +42,8 @@ def schedule_softmax(_, outputs, target):
 
 reg.register_pattern("nn.softmax", OpPattern.OPAQUE)
 reg.register_is_stateful("nn.softmax", False)
+reg.register_dynamic_compute("nn.softmax", True)
+reg.register_shape_func("nn.softmax", False, reg.identity_shape_func)
 
 schedule_broadcast = schedule_injective
 
@@ -52,6 +57,8 @@ def schedule_log_softmax(_, outputs, target):
 
 reg.register_pattern("nn.log_softmax", OpPattern.OPAQUE)
 reg.register_is_stateful("nn.log_softmax", False)
+reg.register_dynamic_compute("nn.log_softmax", True)
+reg.register_shape_func("nn.log_softmax", False, reg.identity_shape_func)
 
 
 # dense
@@ -281,6 +288,7 @@ reg.register_pattern("nn.conv2d_transpose", OpPattern.OUT_ELEMWISE_FUSABLE)
 
 # bias_add
 reg.register_schedule("nn.bias_add", schedule_injective)
+reg.register_dynamic_compute("nn.bias_add", True)
 reg.register_pattern("nn.bias_add", OpPattern.BROADCAST)
 reg.register_is_stateful("nn.bias_add", False)
 
@@ -782,6 +790,10 @@ reg.register_pattern("nn.cross_entropy_with_logits", OpPattern.OPAQUE)
 def compute_cross_entropy(attrs, inputs, out_dtype, target):
     x, y = inputs
     return [-topi.sum(x * y) / x.shape[0]]
+
+
+reg.register_dynamic_compute("nn.cross_entropy_with_logits", True)
+reg.register_shape_func("nn.cross_entropy_with_logits", False, reg.return_scalar_shape_func)
 
 
 @script
