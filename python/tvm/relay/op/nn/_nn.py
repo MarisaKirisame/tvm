@@ -27,6 +27,7 @@ from ....hybrid import script
 # relu
 reg.register_schedule("nn.relu", schedule_injective)
 reg.register_pattern("nn.relu", OpPattern.ELEMWISE)
+reg.register_is_stateful("nn.relu", False)
 
 # softmax
 @reg.register_schedule("nn.softmax")
@@ -37,6 +38,7 @@ def schedule_softmax(_, outputs, target):
 
 
 reg.register_pattern("nn.softmax", OpPattern.OPAQUE)
+reg.register_is_stateful("nn.softmax", False)
 
 schedule_broadcast = schedule_injective
 
@@ -49,6 +51,7 @@ def schedule_log_softmax(_, outputs, target):
 
 
 reg.register_pattern("nn.log_softmax", OpPattern.OPAQUE)
+reg.register_is_stateful("nn.log_softmax", False)
 
 
 # dense
@@ -279,6 +282,7 @@ reg.register_pattern("nn.conv2d_transpose", OpPattern.OUT_ELEMWISE_FUSABLE)
 # bias_add
 reg.register_schedule("nn.bias_add", schedule_injective)
 reg.register_pattern("nn.bias_add", OpPattern.BROADCAST)
+reg.register_is_stateful("nn.bias_add", False)
 
 
 # max_pool2d
@@ -796,3 +800,6 @@ def dense_shape_func(_, args, ndims):
     assert int(y.shape[0]) == int(ndim)
     assert x.dtype == y.dtype
     return [_dense_shape_func(x, y, ndim)]
+
+reg.register_dynamic_compute("nn.dense", False)
+reg.register_is_stateful("nn.dense", False)

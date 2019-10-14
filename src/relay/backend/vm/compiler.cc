@@ -556,9 +556,27 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     return ret_regs;
   }
 
+  bool IsDynamicCompute(const Expr& e) {
+    struct IsDynamicComputeVisitor : ExprVisitor {
+      bool b = true;
+      void VisitExpr_(const OpNode* op) {
+        Op OP = GetRef<Op>(op);
+        static auto op_dynamic_compute = Op::GetAttr<TOpDynamicCompute>("TOpDynamicCompute");
+        CHECK_GT(op_dynamic_compute.count(OP), 0) << "TOpDynamicCompute not registered for " << OP;
+        b &= op_dynamic_compute[OP];
+      }
+    };
+    IsDynamicComputeVisitor dc;
+    dc(e);
+    return dc.b;
+  }
+
   void EmitInvokePrimitive(const Function& func,
                            const std::vector<Index>& arg_registers,
                            const Type& ret_type) {
+
+    IsDynamicCompute(func);
+
     std::vector<Index> unpacked_arg_regs;
     std::vector<Instruction> allocs;
 

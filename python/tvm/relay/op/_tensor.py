@@ -18,7 +18,7 @@
 """Backend compiler related feature registration"""
 from __future__ import absolute_import
 import topi
-from .op import register_compute, register_schedule, register_pattern, register_shape_func
+from .op import register_compute, register_schedule, register_pattern, register_shape_func, register_is_stateful
 from .op import schedule_injective, OpPattern
 from ...hybrid import script
 

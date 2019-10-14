@@ -640,7 +640,7 @@ class CompileEngineImpl : public CompileEngineNode {
       value->use_count = 0;
       cache_[key] = value;
     }
-    // Enforce use the target.
+    // Enforce use of the target.
     With<Target> target_scope(key->target);
 
     CHECK(!value->cached_func.defined());
