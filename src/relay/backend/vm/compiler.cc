@@ -664,9 +664,6 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     } else {
       using JITMap = std::map<InlineCacheKey, PackedFunc>;
       auto jit_map = JITMap();
-      Emit(Instruction::InvokePacked(cfunc_index, arity, return_count, unpacked_arg_regs));
-    } else {
-      std::map<InlineCacheKey, PackedFunc> jit_map;
       auto type = Downcast<FuncType>(func->checked_type());
       auto pf = PackedFunc([=](TVMArgs args, TVMRetValue* rv) mutable {
         InlineCacheKey ick;

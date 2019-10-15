@@ -480,11 +480,6 @@ class VirtualMachine : public runtime::ModuleNode {
                             Index output_size,
                             const std::vector<ObjectRef>& args);
 
-  size_t next_packed_func_index = 0;
-  size_t NewPackedFuncIndex() {
-    ++next_packed_func_index;
-    return next_packed_func_index - 1;
-  }
   /*! \brief Construct a invoke packed instruction.
    *  \param pf The PackedFunc.
    *  \param arity The arity of the function.
@@ -510,15 +505,6 @@ class VirtualMachine : public runtime::ModuleNode {
     ++next_packed_func_index;
     return next_packed_func_index - 1;
   }
-  /*! \brief Construct a invoke packed instruction.
-   *  \param pf The PackedFunc.
-   *  \param arity The arity of the function.
-   *  \param output_size The number of outputs of the packed function.
-   *  \param args The argument registers.
-   *  \return The invoke packed instruction.
-   */
-  Instruction InvokeNewPacked(const PackedFunc& pf, Index arity, Index output_size,
-                              const std::vector<RegName>& args);
   /*! \brief The virtual machine's function table. */
   std::vector<VMFunction> functions;
   /*! \brief The current stack of call frames. */

@@ -28,7 +28,7 @@ from ....hybrid import script
 reg.register_schedule("nn.relu", schedule_injective)
 reg.register_dynamic_compute("nn.relu", True)
 reg.register_pattern("nn.relu", OpPattern.ELEMWISE)
-reg.register_dynamic_compute("nn.relu", True)reg.register_is_stateful("nn.relu", False)
+reg.register_is_stateful("nn.relu", False)
 reg.register_shape_func("nn.relu", False, reg.identity_shape_func)
 
 # softmax
