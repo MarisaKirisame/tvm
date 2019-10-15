@@ -419,7 +419,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     auto cfunc = engine_->Lower(key);
     auto op_index = -1;
     if (context_->seen_funcs.find(cfunc->funcs[0]) == context_->seen_funcs.end()) {
-      op_index = context_->cached_funcs.size();
+      op_index = vm_->NewPackedFuncIndex();
       context_->cached_funcs.push_back(cfunc);
       context_->seen_funcs[cfunc->funcs[0]] = op_index;
     } else {
@@ -470,7 +470,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
     auto cfunc = engine_->LowerShapeFunc(key);
     int op_index = -1;
     if (context_->seen_funcs.count(cfunc->funcs[0]) == 0) {
-      op_index = context_->cached_funcs.size();
+      op_index = vm_->NewPackedFuncIndex();
       context_->cached_funcs.push_back(cfunc);
       context_->seen_funcs[cfunc->funcs[0]] = op_index;
     } else {
@@ -653,7 +653,7 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
       CHECK_EQ(cfunc->funcs.size(), 1);
       auto op_index = -1;
       if (context_->seen_funcs.find(cfunc->funcs[0]) == context_->seen_funcs.end()) {
-        op_index = context_->cached_funcs.size();
+        op_index = vm_->NewPackedFuncIndex();
         context_->cached_funcs.push_back(cfunc);
         context_->seen_funcs[cfunc->funcs[0]] = op_index;
       } else {
@@ -1041,9 +1041,8 @@ void VMCompiler::LibraryCodegen() {
   } else {
     LOG(FATAL) << "relay.backend.build is not registered";
   }
-  size_t primitive_index = 0;
   for (auto cfunc : cached_funcs) {
-    vm_->primitive_map.insert({cfunc->funcs[0]->name, primitive_index++});
+    vm_->primitive_map.insert({cfunc->funcs[0]->name, context_.seen_funcs.at(cfunc->funcs[0])});
   }
 }
 

@@ -757,8 +757,20 @@ void VirtualMachine::Init(const std::vector<TVMContext>& ctxs) {
     if (packed_funcs.size() <= packed_index) {
       packed_funcs.resize(packed_index + 1);
     }
+    CHECK(packed_funcs[packed_index] == nullptr) << "packed index already registered: " << packed_index;
     packed_funcs[packed_index] = lib.GetFunction(packed_name);
   }
+}
+
+Instruction VirtualMachine::InvokeNewPacked(const PackedFunc& pf, Index arity, Index output_size,
+                                            const std::vector<RegName>& args) {
+  size_t idx = NewPackedFuncIndex();
+  if (packed_funcs.size() <= idx) {
+    packed_funcs.resize(idx + 1);
+  }
+  CHECK(packed_funcs[idx] == nullptr);
+  packed_funcs[idx] = pf;
+  return Instruction::InvokePacked(idx, arity, output_size, args);
 }
 
 inline void VirtualMachine::WriteRegister(Index r, const Object& val) {
