@@ -230,6 +230,36 @@ class ExprMutator
   std::unordered_map<Expr, Expr, NodeHash, NodeEqual> memo_;
 };
 
+template<typename R>
+class OpMatch {
+ public:
+  using MatchFunc =
+      std::function<R(const Array<Expr>& args, const Attrs& attrs, const Array<Type>& type_args)>;
+
+  inline OpMatch& Match(const std::string& op_name, MatchFunc func) {
+    auto op = Op::Get(op_name);
+    match_map_.insert({op, func});
+    return *this;
+  }
+
+  inline R operator()(const Call& call) {
+    auto it = match_map_.find(Downcast<Op>(call->op));
+    if (it != match_map_.end()) {
+      return it->second(call->args, call->attrs, call->type_args);
+    } else {
+      if (default_ != nullptr) {
+        return default_(call->args, call->attrs, call->type_args);
+      } else {
+        LOG(FATAL) << "unexpected operation " << call->op;
+      }
+    }
+  }
+
+ private:
+  std::unordered_map<Op, MatchFunc, NodeHash, NodeEqual> match_map_;
+  MatchFunc default_;
+};
+
 /*!
  * \brief recursively visit the ir in post DFS order node, apply fvisit
  * Each node is guaranteed to be visited only once.

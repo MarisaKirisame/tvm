@@ -32,6 +32,15 @@ namespace tvm {
 namespace runtime {
 namespace vm {
 
+static void BufferDeleter(NDArray::Container* ptr) {
+  CHECK(ptr->manager_ctx != nullptr);
+  Buffer* buffer = reinterpret_cast<Buffer*>(ptr->manager_ctx);
+  MemoryManager::Global()->GetAllocator(buffer->ctx)->
+      Free(*(buffer));
+  delete buffer;
+  delete ptr;
+}
+
 inline void VerifyDataType(DLDataType dtype) {
   CHECK_GE(dtype.lanes, 1);
   if (dtype.code == kDLFloat) {
@@ -50,6 +59,20 @@ inline size_t GetDataAlignment(const DLTensor& arr) {
   return align;
 }
 
+NDArray Buffer::AsNDArray(size_t offset, std::vector<int64_t> shape, DLDataType dtype, DLContext ctx) {
+  // TODO(@jroesch): generalize later to non-overlapping allocations.
+  CHECK_EQ(offset, 0u);
+  VerifyDataType(dtype);
+  NDArray::Container* container = new NDArray::Container(nullptr, shape, dtype, ctx);
+  container->deleter = BufferDeleter;
+  // size_t size = GetDataSize(container->dl_tensor);
+  // size_t alignment = GetDataAlignment(container->dl_tensor);
+  // TODO(@jroesch): check these against the buffer.
+  container->manager_ctx = reinterpret_cast<void*>(this);
+  container->dl_tensor.data = this->data;
+  return NDArray(container);
+}
+
 MemoryManager* MemoryManager::Global() {
   static MemoryManager memory_manager;
   return &memory_manager;
@@ -64,15 +87,6 @@ Allocator* MemoryManager::GetAllocator(TVMContext ctx) {
     allocators_.emplace(ctx, std::move(alloc));
   }
   return allocators_.at(ctx).get();
-}
-
-static void BufferDeleter(NDArray::Container* ptr) {
-  CHECK(ptr->manager_ctx != nullptr);
-  Buffer* buffer = reinterpret_cast<Buffer*>(ptr->manager_ctx);
-  MemoryManager::Global()->GetAllocator(buffer->ctx)->
-      Free(*(buffer));
-  delete buffer;
-  delete ptr;
 }
 
 NDArray Allocator::Empty(std::vector<int64_t> shape, DLDataType dtype, DLContext ctx) {

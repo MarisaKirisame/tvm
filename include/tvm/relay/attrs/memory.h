@@ -18,11 +18,11 @@
  */
 
 /*!
- * \file tvm/relay/attrs/annotation.h
- * \brief Attribute for annotation operators.
+ * \file tvm/relay/attrs/memory.h
+ * \brief Attributes for memory operators.
  */
-#ifndef TVM_RELAY_ATTRS_ANNOTATION_H_
-#define TVM_RELAY_ATTRS_ANNOTATION_H_
+#ifndef TVM_RELAY_ATTRS_MEMORY_H_
+#define TVM_RELAY_ATTRS_MEMORY_H_
 
 #include <tvm/attrs.h>
 #include <tvm/relay/expr.h>
@@ -30,33 +30,6 @@
 
 namespace tvm {
 namespace relay {
-
-/*!
- * \brief Options for the device annotation operators.
- */
-struct OnDeviceAttrs : public tvm::AttrsNode<OnDeviceAttrs> {
-  int device_type;
-
-  TVM_DECLARE_ATTRS(OnDeviceAttrs, "relay.attrs.OnDeviceAttrs") {
-    TVM_ATTR_FIELD(device_type)
-      .describe(
-         "The virutal device/context type that an expression is annotated with.")
-      .set_default(0);
-  }
-};
-
-/*!
- * \brief Annotate an expression to be cast into specific data type.
- */
-struct CastHintAttrs : public tvm::AttrsNode<CastHintAttrs> {
-  DataType dtype;
-
-  TVM_DECLARE_ATTRS(CastHintAttrs, "relay.attrs.CastHintAttrs") {
-    TVM_ATTR_FIELD(dtype)
-      .describe(
-         "The data type denoted to be cast.");
-  }
-};
 
 /*!
  * \brief Options for the device annotation operators.
@@ -69,14 +42,14 @@ struct AllocTensorAttrs : public tvm::AttrsNode<AllocTensorAttrs> {
   TVM_DECLARE_ATTRS(AllocTensorAttrs, "relay.attrs.AllocTensorAttrs") {
     TVM_ATTR_FIELD(dtype)
       .describe(
-         "The virutal device/context type that an expression is annotated with.")
+         "The dtype of the tensor to allocate.")
       .set_default(Float(32, 1));
     TVM_ATTR_FIELD(const_shape)
       .describe(
-         "The virutal device/context type that an expression is annotated with.");
+         "The shape if constant used to aid in type inference.");
     TVM_ATTR_FIELD(assert_shape)
       .describe(
-         "The virutal device/context type that an expression is annotated with.");
+         "The shape to cast the return type of the allocation to, used to specify the shape obtained via further analysis.");
   }
 };
 
@@ -96,4 +69,4 @@ struct ShapeFuncAttrs : public tvm::AttrsNode<ShapeFuncAttrs> {
 
 }  // namespace relay
 }  // namespace tvm
-#endif  // TVM_RELAY_ATTRS_ANNOTATION_H_
+#endif  // TVM_RELAY_ATTRS_MEMORY_H_
