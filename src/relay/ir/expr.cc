@@ -356,8 +356,9 @@ TVM_REGISTER_API("relay._expr.TempExprRealize")
 });
 
 TVM_REGISTER_API("relay._expr.FunctionSetAttr")
-.set_body_typed<Function(Function, std::string, NodeRef)>([](Function func, std::string name, NodeRef ref) {
-  return FunctionSetAttr(func, name, ref);
+.set_body_typed<Function(Function, std::string, NodeRef)>(
+  [](Function func, std::string name, NodeRef ref) {
+    return FunctionSetAttr(func, name, ref);
 });
 
 }  // namespace relay

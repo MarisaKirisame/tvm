@@ -80,6 +80,8 @@ bool BroadcastCompRel(const Array<Type>& types,
                       const Attrs& attrs,
                       const TypeReporter& reporter);
 
+Array<IndexExpr> RankShape(const Array<IndexExpr>& shape);
+
 }  // namespace relay
 }  // namespace tvm
 

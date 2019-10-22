@@ -74,12 +74,6 @@ bool ConstantCheck(const Expr& e) {
 TVM_REGISTER_API("relay._analysis.check_constant")
 .set_body_typed(ConstantCheck);
 
-template <typename T>
-T GetScalarFromConstantYOLO(Expr expr) {
-  const auto* n = expr.as<ConstantNode>();
-  return static_cast<T*>(n->data->data)[0];
-}
-
 // TODO(tvm-team) consider combine dead-code with constant folder.
 // or make a more powerful partial evaluator.
 class ConstantFolder : public ExprMutator {
@@ -124,29 +118,13 @@ class ConstantFolder : public ExprMutator {
       return EvaluateShapeOf(res, origin_args, call->attrs);
     }
 
-    // if (call->op.same_as(Op::Get("memory.invoke_tvm_op"))) {
-    //     auto fn = Downcast<Function>(call->args[0]);
-    //     auto is_const = fn->body.as<ConstantNode>();
-    //     if (is_const) {
-    //       return GetRef<Constant>(is_const);
-    //     } else {
-    //       return GetRef<Call>(call);
-    //     }
-    // }
-
+    // We should think about potentially constant evaluation over these ops too.
     if (call->op.same_as(Op::Get("memory.invoke_tvm_op")) ||
         call->op.same_as(Op::Get("memory.shape_func")) ||
         call->op.same_as(Op::Get("memory.alloc_tensor")) ||
         call->op.same_as(Op::Get("memory.alloc_storage"))) {
       return GetRef<Call>(call);
     }
-
-    // // If the function we are calling is a constant function, i.e
-    // // returns a constant, then we just skip any evaluation.
-    // auto is_func = call->op.as<FunctionNode>();
-    // if (is_func && is_func->body.as<ConstantNode>()) {
-    //   return GetRef<Constant>(is_func->body.as<ConstantNode>());
-    // }
 
     bool all_const_args = true;
     for (Expr arg : call->args) {
@@ -247,7 +225,7 @@ class ConstantFolder : public ExprMutator {
     if (ishape.size() == 0) {
       value = runtime::NDArray::Empty({}, cdtype, ctx);
     } else {
-      CHECK(ishape.size() != 0);
+      CHECK_NE(ishape.size(), 0);
       std::vector<int64_t> cshape = { static_cast<int64_t>(ishape.size()) };
       value = runtime::NDArray::Empty(cshape, cdtype, ctx);
       int32_t* dims = static_cast<int32_t*>(value->data);
@@ -263,15 +241,11 @@ class ConstantFolder : public ExprMutator {
 
     Constant shape = Downcast<Constant>(ValueToExpr(TensorValueNode::make(value)));
 
-    std::cout << "SHAPE BEFORE: " << shape << std::endl;
-
-    if (shape->data.Shape().size() == 0 && GetScalarFromConstantYOLO<int32_t>(shape) == 0) {
-      std::cout << "INSDIE";
+    if (shape->data.Shape().size() == 0 && GetScalarFromConstant<int32_t>(shape) == 0) {
       auto ndarray = runtime::NDArray::Empty({}, cdtype, ctx);
       shape = ConstantNode::make(ndarray);
     }
 
-    std::cout << "SHAPE AFTER: " << shape << std::endl;
     // Cast the constant into correct dtype
     auto cast_attrs = make_node<CastAttrs>();
     cast_attrs->dtype = param->dtype;

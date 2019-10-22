@@ -26,13 +26,12 @@
 #include <tvm/operation.h>
 #include <tvm/relay/error.h>
 #include <tvm/relay/expr_functor.h>
-#include <tvm/relay/op_attr_types.h>
 #include <tvm/relay/interpreter.h>
 #include <tvm/relay/qnn/transform.h>
 #include <tvm/logging.h>
 #include <tvm/relay/transform.h>
 #include <tvm/runtime/vm.h>
-#include <tvm/relay/attrs/annotation.h>
+#include <tvm/relay/attrs/memory.h>
 #include <topi/tags.h>
 #include <algorithm>
 #include <iostream>
@@ -200,6 +199,39 @@ TreeNodePtr BuildDecisionTreeFromClauses(MatchValuePtr data, tvm::Array<Clause> 
     else_branch = BuildDecisionTreeFromClause(data, *it, else_branch);
   }
   return else_branch;
+}
+
+std::vector<int64_t> ToAllocTensorShape64(NDArray shape) {
+  std::vector<int64_t> raw_shape;
+  DLTensor tensor = shape.ToDLPack()->dl_tensor;
+  CHECK_EQ(tensor.ndim, 1u);
+  CHECK_EQ(tensor.dtype.code, 0U) << "found " << tensor.dtype.code;
+
+  // TODO(@jroesch): we really need to standaridize the bit width of
+  // all of the shape manipulating code.
+  CHECK_EQ(tensor.dtype.bits, 64) << "found " << tensor.dtype.bits;
+  int64_t* int_ptr = reinterpret_cast<int64_t*>(tensor.data);
+  for (auto i = 0; i < tensor.shape[0]; i++) {
+    raw_shape.push_back(int_ptr[i]);
+  }
+  return raw_shape;
+}
+
+
+std::vector<int64_t> ToAllocTensorShape32(NDArray shape) {
+  std::vector<int64_t> raw_shape;
+  DLTensor tensor = shape.ToDLPack()->dl_tensor;
+  CHECK_EQ(tensor.ndim, 1u);
+  CHECK_EQ(tensor.dtype.code, 0U) << "found " << tensor.dtype.code;
+
+  // TODO(@jroesch): we really need to standaridize the bit width of
+  // all of the shape manipulating code.
+  CHECK_LE(tensor.dtype.bits, 32) << "found " << tensor.dtype.bits;
+  int32_t* int_ptr = reinterpret_cast<int32_t*>(tensor.data);
+  for (auto i = 0; i < tensor.shape[0]; i++) {
+    raw_shape.push_back(static_cast<int64_t>(int_ptr[i]));
+  }
+  return raw_shape;
 }
 
 class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
@@ -421,11 +453,13 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
 
     auto input_tuple = inputs.as<TupleNode>();
     CHECK(input_tuple)
-      << "internal error: invoke_tvm_op inputs must be a tuple, please file a bug in the memory manifestation pass";
+      << "internal error: invoke_tvm_op inputs must be a tuple,"
+      << "please file a bug in the memory manifestation pass";
 
     auto output_tuple = outputs.as<TupleNode>();
     CHECK(output_tuple)
-      << "internal error: invoke_tvm_op outputs must be a tuple, please file a bug in the memory manifestation pass";
+      << "internal error: invoke_tvm_op outputs must be a tuple,"
+      << "please file a bug in the memory manifestation pass";
 
     for (auto input : input_tuple->fields) {
       auto reg = var_register_map_.find(Downcast<Var>(input));
@@ -503,20 +537,16 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
           auto const_shape = args[1].as<ConstantNode>();
 
           if (const_shape) {
-            // TODO: convert from NDArray.
             NDArray shape = const_shape->data;
             std::vector<int64_t> raw_shape;
             DLTensor tensor = shape.ToDLPack()->dl_tensor;
-            CHECK_EQ(tensor.ndim, 1u);
-            CHECK_EQ(tensor.dtype.code, 0U)
-              << "found " << tensor.dtype.code;
-
-            // TODO(@jroesch): we really need to standardized
-            CHECK_LE(tensor.dtype.bits, 64)
-              << "found " << tensor.dtype.bits;
-            int64_t* int_ptr = (int64_t*)tensor.data;
-            for (auto i = 0; i < tensor.shape[0]; i++) {
-              raw_shape.push_back(int_ptr[i]);
+            // TODO(@jroesch): we need to get an RFC done to standarize this
+            if (tensor.dtype.bits == 64) {
+              raw_shape = ToAllocTensorShape64(shape);
+            } else if (tensor.dtype.bits == 32) {
+              raw_shape = ToAllocTensorShape32(shape);
+            } else {
+              LOG(FATAL) << "unsupported bitwidth: " << tensor.dtype.bits;
             }
 
             // Add context field.
@@ -524,7 +554,11 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
           } else {
             this->VisitExpr(args[1]);
             auto shape_register = last_register_;
-            Emit(Instruction::AllocTensorReg(storage_register, shape_register, dtype, NewRegister()));
+            Emit(Instruction::AllocTensorReg(
+              storage_register,
+              shape_register,
+              dtype,
+              NewRegister()));
           }
       }).Match("memory.alloc_storage",
         [this](const Array<Expr>& args, const Attrs& attrs, const Array<Type>& type_arg) {
@@ -597,7 +631,8 @@ class VMFunctionCompiler : ExprFunctor<void(const Expr& expr)> {
       Emit(Instruction::InvokeClosure(last_register_, args_registers, NewRegister()));
     } else {
       // Finally if there are any other cases this is a bug.
-      LOG(FATAL) << "internal error: unreachable code, should be transformed away by previous passes"
+      LOG(FATAL) << "internal error: unreachable code,"
+                 << "should be transformed away by previous passes"
                  << PrettyPrint(GetRef<Expr>(call_node));
     }
   }
@@ -873,7 +908,7 @@ Module VMCompiler::OptimizeModule(const Module& mod, const TargetsMap& targets) 
   pass_seqs.push_back(transform::LambdaLift());
   pass_seqs.push_back(transform::InlinePrimitives());
 
-  // Manifest the the allocations.
+  // Manifest the allocations.
   pass_seqs.push_back(transform::ManifestAlloc(this->target_host_));
   // Compute away possibly introduced constant computation.
   pass_seqs.push_back(transform::FoldConstant());

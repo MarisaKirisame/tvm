@@ -27,7 +27,8 @@ def _debugger_init(expr, stack):
 
 @register_func("relay.debug")
 def _debug(*args):
-    import pdb; pdb.set_trace()
+    import pdb
+    pdb.set_trace()
 
 # pylint: disable=unused-argument
 @register_func("relay.debug_interp")

@@ -72,7 +72,7 @@ bool IsDynamic(const Type& ty) {
   return v.is_dyn;
 }
 
-// TODO MOVE ME
+// TODO(@jroesch): MOVE ME
 TVM_REGISTER_API("relay._make.IsDynamic")
 .set_body_typed(IsDynamic);
 

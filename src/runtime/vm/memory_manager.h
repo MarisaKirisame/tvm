@@ -62,12 +62,6 @@ struct Buffer {
   size_t size{0};
   /*! \brief The context of the allocated buffers. */
   TVMContext ctx;
-
-  /*! \brief Allocate an NDArray from a given piece of storage. */
-  NDArray AsNDArray(size_t offset,
-                    std::vector<int64_t> shape,
-                    DLDataType dtype,
-                    DLContext ctx);
 };
 
 class Allocator {
@@ -121,6 +115,13 @@ class StorageObj : public Object {
   /*! \brief The index into the VM function table. */
   Buffer buffer;
 
+  /*! \brief Allocate an NDArray from a given piece of storage. */
+  NDArray AllocNDArray(size_t offset,
+                       std::vector<int64_t> shape,
+                       DLDataType dtype);
+
+  static void Deleter(NDArray::Container* ptr);
+
   static constexpr const uint32_t _type_index = TypeIndex::kDynamic;
   static constexpr const char* _type_key = "vm.Storage";
   TVM_DECLARE_FINAL_OBJECT_INFO(StorageObj, Object);
@@ -129,9 +130,9 @@ class StorageObj : public Object {
 /*! \brief reference to storage. */
 class Storage : public ObjectRef {
  public:
-  Storage(Buffer buffer);
+  explicit Storage(Buffer buffer);
 
-  TVM_DEFINE_OBJECT_REF_METHODS(Storage, ObjectRef, StorageObj);
+  TVM_DEFINE_OBJECT_REF_METHODS_MUT(Storage, ObjectRef, StorageObj);
 };
 
 }  // namespace vm

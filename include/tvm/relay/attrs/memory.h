@@ -32,7 +32,7 @@ namespace tvm {
 namespace relay {
 
 /*!
- * \brief Options for the device annotation operators.
+ * \brief Options for allocating tensors.
  */
 struct AllocTensorAttrs : public tvm::AttrsNode<AllocTensorAttrs> {
   tvm::relay::Constant const_shape;
@@ -46,24 +46,25 @@ struct AllocTensorAttrs : public tvm::AttrsNode<AllocTensorAttrs> {
       .set_default(Float(32, 1));
     TVM_ATTR_FIELD(const_shape)
       .describe(
-         "The shape if constant used to aid in type inference.");
+         "The shape of constant used to aid in type inference.");
     TVM_ATTR_FIELD(assert_shape)
       .describe(
-         "The shape to cast the return type of the allocation to, used to specify the shape obtained via further analysis.");
+         "The shape to cast the return type of the allocation to, "\
+         "used to specify the shape obtained via further analysis.");
   }
 };
 
 /*!
- * \brief Options for the device annotation operators.
+ * \brief Options for the shape function operator.
  */
 struct ShapeFuncAttrs : public tvm::AttrsNode<ShapeFuncAttrs> {
-  bool dependent{false};
+  Array<tvm::Integer> is_input;
 
   TVM_DECLARE_ATTRS(ShapeFuncAttrs, "relay.attrs.ShapeFuncAttrs") {
-    TVM_ATTR_FIELD(dependent)
+    TVM_ATTR_FIELD(is_input)
       .describe(
-         "Wheather the shape function is input dependent.")
-      .set_default(false);
+         "A bool indicating whether the shape function should"\
+         "expect shape or input in each position.");
   }
 };
 

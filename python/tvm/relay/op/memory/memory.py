@@ -17,8 +17,24 @@
 """Operators for manipulating low-level memory."""
 from __future__ import absolute_import as _abs
 from . import _make
-from .... import nd as _nd
-from .... import TVMContext as _TVMContext
+
+def invoke_tvm_op(func, inputs, outputs):
+    """Call a primitive function with the TVM operator calling convention.
+
+    Parameters
+    ----------
+    inputs : tvm.relay.Expr
+        A tuple of the inputs to pass to the TVM function.
+
+    outputs : tvm.relay.Expr
+        A tuple of the outputs to pass to the TVM function.
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The invoke_tvm_op call node.
+    """
+    return _make.invoke_tvm_op(func, inputs, outputs)
 
 def alloc_tensor(storage, shape, dtype='float32', assert_shape=None):
     """Allocate a tensor with the provided shape, and dtype.
@@ -34,7 +50,7 @@ def alloc_tensor(storage, shape, dtype='float32', assert_shape=None):
     dtype: str
         The dtype of the tensor.
 
-    assert_shape: TODO
+    assert_shape: Control the static shape when computed by dynamic shape expression.
 
     Returns
     -------
@@ -44,7 +60,7 @@ def alloc_tensor(storage, shape, dtype='float32', assert_shape=None):
     return _make.alloc_tensor(storage, shape, dtype, assert_shape)
 
 def alloc_storage(size, alignment, dtype_hint='float32'):
-    """Annotate an expression to prevent it being fused with previous expressions.
+    """Allocate a piece of tensor storage.
 
     Parameters
     ----------

@@ -14,28 +14,34 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+# pylint: disable=no-else-return,invalid-name,len-as-condition
+"""
+A pass for manifesting explicit memory allocations.
+"""
+import numpy as np
 from .expr_functor import ExprMutator
 from .scope_builder import ScopeBuilder
 from . import transform
-from .module import Module
 from . import op, ty, expr
-from .. import nd, TVMType, register_func
-from ..target import current_target
-from .. import convert
+from .. import TVMType, register_func
 from .backend import compile_engine
-import numpy as np
+
 
 def is_primitive(call):
     return hasattr(call.op, 'attrs') and int(call.op.attrs.Primitive) == 1
 
+# TODO(@jroesch): port to c++ and unify with existing code
 class LinearizeRetType:
     """A linear view of a Relay type, handles a linear order
        for nested tuples, and tensor types.
     """
-    def __init__(self, ty):
-        self.ty = ty
+
+    def __init__(self, typ):
+        """Initialize the linearizer."""
+        self.typ = typ
 
     def unpack(self):
+        """Return the linear representation of the type."""
         def _unpack(typ, out):
             # TODO(@jroesch): replace with new flattening pass
             if isinstance(typ, ty.TensorType):
@@ -47,10 +53,11 @@ class LinearizeRetType:
                 raise Exception(f"unsupported Relay type: {typ}")
 
         output = []
-        _unpack(self.ty, output)
+        _unpack(self.typ, output)
         return output
 
     def pack(self, seq):
+        """Repack a linear type as a nested type."""
         def _pack(value, typ, out):
             if isinstance(typ, ty.TensorType):
                 out.append(value)
@@ -66,18 +73,16 @@ class LinearizeRetType:
             return seq[0]
         else:
             out = []
-            _pack(seq, self.ty, out)
+            _pack(seq, self.typ, out)
             assert len(out) == 1, "must return fully packed type"
             return out[0]
 
-def infer_type(expr):
-    m = Module.from_expr(expr)
-    m = transform.InferType()(m)
-    return m['main']
 
-class ExplictAlloc(ExprMutator):
+class ManifestAllocPass(ExprMutator):
+    """A pass for explictly manifesting all memory allocations in Relay."""
+
     def __init__(self, target_host):
-        self.invoke_tvm = op.get('memory.invoke_tvm_op')
+        self.invoke_tvm = op.memory.invoke_tvm_op
         self.alloc_storage = op.memory.alloc_storage
         self.alloc_tensor = op.memory.alloc_tensor
         self.shape_func = op.memory.shape_func
@@ -91,35 +96,11 @@ class ExplictAlloc(ExprMutator):
 
     def shape_of(self, e):
         return op.shape_of(e, self.compute_dtype)
-        # inp = expr.var("t1", type_annotation=e.checked_type)
-        # shape_of = expr.Function([inp], op.shape_of(inp, self.compute_dtype))
-        # one = convert(1)
-        # # This is kind of a hack, need to think about this.
-        # shape_of = shape_of.set_attribute("Primitive", one)
-        # call = expr.Call(shape_of, [e])
-        # func = infer_type(expr.Function([e], call))
-        # ctype = func.body.checked_type
-        # result = expr.bind(func.body, { func.params[0]: e })
-        # result._checked_type_ = ctype
-        # return result
 
-    # def compute_storage(self, tensor_type):
-    #     dtype = TVMType(tensor_type.dtype)
-    #     shape = [int(sh) for sh in tensor_type.shape]
-    #     if TVMType.CODE2STR[dtype.type_code] == 'float':
-    #         dtype_size = dtype.bits * dtype.lanes
-    #         size = 1
-    #         for dim in shape:
-    #             size *= dim
-    #         size *= dtype_size
-    #         return expr.const(size, dtype='int32')
-    #     else:
-    #         raise Exception("...")
-
-    def visit_tuple(self, tuple):
+    def visit_tuple(self, tup):
         scope = self.current_scope()
         new_fields = []
-        for field in tuple.fields:
+        for field in tup.fields:
             field = self.visit(field)
             if isinstance(field, expr.Constant):
                 field = scope.let('const', field)
@@ -138,7 +119,8 @@ class ExplictAlloc(ExprMutator):
     def compute_storage_in_relay(self, shape, dtype):
         dtype = TVMType(dtype)
         els = op.prod(shape)
-        num = expr.const(dtype.bits * dtype.lanes, self.compute_dtype) + expr.const(7, self.compute_dtype)
+        num = expr.const(dtype.bits * dtype.lanes, self.compute_dtype)
+        num = num + expr.const(7, self.compute_dtype)
         div = expr.const(8, self.compute_dtype)
         return els * (num / div)
 
@@ -146,22 +128,26 @@ class ExplictAlloc(ExprMutator):
         dtype = TVMType(tensor_type.dtype)
         shape = [int(sh) for sh in tensor_type.shape]
         size = 1
-        for i in range(len(shape)):
-            size *= shape[i]
+        for sh in shape:
+            size *= sh
         size *= (dtype.bits * dtype.lanes + 7) // 8
         return expr.const(size, dtype=self.compute_dtype)
 
     def make_static_allocation(self, scope, tensor_type, i):
+        """Allocate a tensor with a statically known shape."""
         shape = [int(sh) for sh in tensor_type.shape]
-        if not len(shape):
-            shape = expr.const(np.array([]).astype(self.compute_dtype), dtype=self.compute_dtype)
+        if len(shape) == 0:
+            shape = expr.const(np.array([]).astype(
+                self.compute_dtype), dtype=self.compute_dtype)
         else:
             shape = expr.const(np.array(shape), dtype=self.compute_dtype)
         size = self.compute_storage(tensor_type)
         alignment = self.compute_alignment(tensor_type.dtype)
         dtype = tensor_type.dtype
-        sto = scope.let(f"storage_{i}", self.alloc_storage(size, alignment, dtype))
-        tensor = self.alloc_tensor(sto, shape, dtype)
+        sto = scope.let(f"storage_{i}", self.alloc_storage(
+            size, alignment, dtype))
+        # TODO(@jroesch): There is a bug with typing based on the constant shape.
+        tensor = self.alloc_tensor(sto, shape, dtype, tensor_type.shape)
         return scope.let(f"tensor_{i}", tensor)
 
     def visit_let(self, let):
@@ -192,37 +178,39 @@ class ExplictAlloc(ExprMutator):
                 shape_func_ins = []
                 engine = compile_engine.get()
                 cfunc = engine.lower_shape_func(call.op, self.target_host)
-                param_type = int(cfunc.shape_func_param_states[0])
-                for state in cfunc.shape_func_param_states:
-                    assert param_type == int(state)
+                input_states = cfunc.shape_func_param_states
 
-                for i, arg in enumerate(new_args):
+                is_inputs = []
+                for i, (arg, state) in enumerate(zip(new_args, input_states)):
+                    state = int(state)
                     # Pass Shapes
-                    if param_type == 2:
+                    if state == 2:
                         sh_of = self.visit(self.shape_of(arg))
-                        shape_func_ins.append(scope.let(f"in_shape_{i}", sh_of))
+                        shape_func_ins.append(
+                            scope.let(f"in_shape_{i}", sh_of))
+                        is_inputs.append(0)
                     # Pass Inputs
-                    elif param_type == 1:
+                    elif state == 1:
                         new_arg = self.visit(arg)
-                        shape_func_ins.append(scope.let(f"in_shape_{i}", new_arg))
+                        shape_func_ins.append(
+                            scope.let(f"in_shape_{i}", new_arg))
+                        is_inputs.append(1)
+                    # TODO(@jroesch): handle 3rd case
                     else:
-                        raise Exception("error")
-
-                if param_type == 2:
-                    dependent = False
-                elif param_type == 1:
-                    dependent = True
+                        raise Exception("unsupported shape function input state")
 
                 out_shapes = []
                 for i, out in enumerate(cfunc.outputs):
                     tt = ty.TensorType(out.shape, out.dtype)
-                    alloc = self.make_static_allocation(scope, tt, "TODO")
-                    # alloc = self.visit(alloc.astype('int32'))
-                    # alloc = scope.let("cast", alloc)
+                    alloc = self.make_static_allocation(scope, tt, i)
                     alloc = scope.let(f"shape_func_out_{i}", alloc)
                     out_shapes.append(alloc)
 
-                shape_call = self.shape_func(call.op, expr.Tuple(shape_func_ins), expr.Tuple(out_shapes), dependent=dependent)
+                shape_call = self.shape_func(
+                    call.op,
+                    expr.Tuple(shape_func_ins),
+                    expr.Tuple(out_shapes), is_inputs)
+
                 scope.let("shape_func", shape_call)
 
                 out_types = []
@@ -230,14 +218,21 @@ class ExplictAlloc(ExprMutator):
 
                 storages = []
                 for out_shape, out_type in zip(out_shapes, out_types):
-                    size = self.compute_storage_in_relay(out_shape, out_type.dtype)
+                    size = self.compute_storage_in_relay(
+                        out_shape, out_type.dtype)
                     alignment = self.compute_alignment(out_type.dtype)
-                    sto = scope.let(f"storage_{i}", self.alloc_storage(size, alignment, out_type.dtype))
+                    sto = scope.let(f"storage_{i}", self.alloc_storage(
+                        size, alignment, out_type.dtype))
                     storages.append(sto)
 
                 outs = []
-                for i, (out_shape, out_type, storage) in enumerate(zip(out_shapes, out_types, storages)):
-                    alloc = self.alloc_tensor(storage, out_shape, out_type.dtype, out_type.shape)
+                sh_ty_storage = zip(out_shapes, out_types, storages)
+                for i, (out_shape, out_type, storage) in enumerate(sh_ty_storage):
+                    alloc = self.alloc_tensor(
+                        storage,
+                        out_shape,
+                        out_type.dtype,
+                        out_type.shape)
                     alloc = scope.let(f"out_{i}", alloc)
                     outs.append(alloc)
 
@@ -260,17 +255,20 @@ class ExplictAlloc(ExprMutator):
         else:
             return super().visit_call(call)
 
+
 @transform.function_pass(opt_level=0)
 class ManifestAlloc:
+    """The explicit pass wrapper around ManifestAlloc."""
     def __init__(self, target_host):
         self.target_host = target_host
 
-    def transform_function(self, func, mod, ctx):
-         # Is there a way to do one shot initilization?
+    def transform_function(self, func, mod, _):
+        # TODO(@jroesch): Is there a way to do one shot initilization?
+        # can we have def pass_init?
         mod.import_from_std("core.rly")
-        ea = ExplictAlloc(self.target_host)
-        r = ea.visit(func)
-        print("After", r)
-        return r
+        ea = ManifestAllocPass(self.target_host)
+        func = ea.visit(func)
+        return func
+
 
 register_func("relay.transform.ManifestAlloc", ManifestAlloc)

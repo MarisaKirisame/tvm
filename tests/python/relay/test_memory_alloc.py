@@ -40,16 +40,13 @@ def test_tyck_alloc_storage():
     mod = relay.Module()
     mod.import_from_std("core.rly")
 
-def test_tyck_test_alloc_tensor_fail():
-    pass
-
 def test_tyck_alloc_tensor():
     mod = relay.Module()
     mod.import_from_std("core.rly")
     sto = relay.Var("x", storage_type(mod))
-    sh = relay.var("sh", shape=(3,), dtype='int32')
-    at = relay.annotation.alloc_tensor(sto, sh, dtype='float32')
-    mod['main'] = relay.Function([sto, sh], at)
+    sh = relay.const(np.array([1, 2]), dtype="int64")
+    at = relay.op.memory.alloc_tensor(sto, sh)
+    mod['main'] = relay.Function([sto], at)
     relay.transform.InferType()(mod)
 
 

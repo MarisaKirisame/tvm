@@ -41,6 +41,21 @@ static void BufferDeleter(NDArray::Container* ptr) {
   delete ptr;
 }
 
+void StorageObj::Deleter(NDArray::Container* ptr) {
+  // When invoking AllocNDArray we don't own the underlying allocation
+  // and should not delete the buffer, but instead let it be reclaimed
+  // by the storage object's destructor.
+  //
+  // We did bump the reference count by 1 to keep alive the StorageObj
+  // allocation in case this NDArray is the sole owner.
+  //
+  // We decrement the object allowing for the buffer to release our
+  // reference count from allocation.
+  StorageObj* storage = reinterpret_cast<StorageObj*>(ptr->manager_ctx);
+  storage->DecRef();
+  delete ptr;
+}
+
 inline void VerifyDataType(DLDataType dtype) {
   CHECK_GE(dtype.lanes, 1);
   if (dtype.code == kDLFloat) {
@@ -59,17 +74,19 @@ inline size_t GetDataAlignment(const DLTensor& arr) {
   return align;
 }
 
-NDArray Buffer::AsNDArray(size_t offset, std::vector<int64_t> shape, DLDataType dtype, DLContext ctx) {
+NDArray StorageObj::AllocNDArray(size_t offset, std::vector<int64_t> shape, DLDataType dtype) {
   // TODO(@jroesch): generalize later to non-overlapping allocations.
   CHECK_EQ(offset, 0u);
   VerifyDataType(dtype);
-  NDArray::Container* container = new NDArray::Container(nullptr, shape, dtype, ctx);
-  container->deleter = BufferDeleter;
-  // size_t size = GetDataSize(container->dl_tensor);
-  // size_t alignment = GetDataAlignment(container->dl_tensor);
-  // TODO(@jroesch): check these against the buffer.
+  NDArray::Container* container = new NDArray::Container(nullptr, shape, dtype, this->buffer.ctx);
+  container->deleter = StorageObj::Deleter;
+  size_t needed_size = GetDataSize(container->dl_tensor);
+  // TODO(@jroesch): generalize later to non-overlapping allocations.
+  CHECK(needed_size == this->buffer.size)
+    << "size mistmatch required " << needed_size << " found " << this->buffer.size;
+  this->IncRef();
   container->manager_ctx = reinterpret_cast<void*>(this);
-  container->dl_tensor.data = this->data;
+  container->dl_tensor.data = this->buffer.data;
   return NDArray(container);
 }
 

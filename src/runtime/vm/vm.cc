@@ -48,10 +48,6 @@ namespace vm {
 class StorageAllocator :
       public ObjAllocatorBase<StorageAllocator> {
  public:
-  Allocator* buffer_allocator;
-  StorageAllocator(Allocator* buffer_allocator)
-    : buffer_allocator(buffer_allocator) {}
-
   template<typename T>
   class Handler {
    public:
@@ -76,19 +72,19 @@ class StorageAllocator :
    private:
     static void Deleter_(Object* ptr) {
       auto storage_ptr = static_cast<StorageObj*>(ptr);
-      // Need to move this code somewhere?
-      // buffer_allocator->Free(storage_ptr->buffer);
-      delete storage_ptr;
+      auto alloc = MemoryManager::Global()->GetAllocator(storage_ptr->buffer.ctx);
+      alloc->Free(storage_ptr->buffer);
+      delete ptr;
     }
   };
 };
 
 inline Storage make_storage(size_t size, size_t alignment, TVMType dtype_hint, TVMContext ctx) {
   // We could put cache in here, from ctx to storage allocator.
+  auto storage_obj = StorageAllocator().make<StorageObj>();
   auto alloc = MemoryManager::Global()->GetAllocator(ctx);
   DCHECK(alloc != nullptr)
     << "allocator must not null";
-  auto storage_obj = StorageAllocator(alloc).make<StorageObj>();
   storage_obj->buffer = alloc->Alloc(size, alignment, dtype_hint);
   return Storage(storage_obj);
 }
@@ -340,7 +336,10 @@ Instruction Instruction::InvokePacked(Index packed_index,
   return instr;
 }
 
-Instruction Instruction::AllocTensor(RegName storage, const std::vector<int64_t>& shape, DLDataType dtype, Index dst) {
+Instruction Instruction::AllocTensor(
+  RegName storage,
+  const std::vector<int64_t>& shape,
+  DLDataType dtype, Index dst) {
   Instruction instr;
   instr.op = Opcode::AllocTensor;
   instr.dst = dst;
@@ -354,7 +353,10 @@ Instruction Instruction::AllocTensor(RegName storage, const std::vector<int64_t>
   return instr;
 }
 
-Instruction Instruction::AllocTensorReg(RegName storage, RegName shape_register, DLDataType dtype, Index dst) {
+Instruction Instruction::AllocTensorReg(
+  RegName storage,
+  RegName shape_register,
+  DLDataType dtype, Index dst) {
   Instruction instr;
   instr.op = Opcode::AllocTensorReg;
   instr.dst = dst;
@@ -364,7 +366,10 @@ Instruction Instruction::AllocTensorReg(RegName storage, RegName shape_register,
   return instr;
 }
 
-Instruction Instruction::AllocStorage(RegName size, Index alignment, TVMType dtype_hint, Index dst) {
+Instruction Instruction::AllocStorage(RegName size,
+  Index alignment,
+  TVMType dtype_hint,
+  Index dst) {
   Instruction instr;
   instr.op = Opcode::AllocStorage;
   instr.dst = dst;
@@ -614,7 +619,7 @@ void InstructionPrint(std::ostream& os, const Instruction& instr) {
         instr.dst << " " <<
         instr.alloc_storage.allocation_size << " " <<
         instr.alloc_storage.alignment << " " <<
-        instr.alloc_storage.dtype_hint;
+        TVMType2String(instr.alloc_storage.dtype_hint);
       break;
     }
     default:
@@ -903,7 +908,7 @@ void VirtualMachine::RunLoop() {
       case Opcode::Invoke: {
         std::vector<ObjectRef> args;
         for (Index i = 0; i < instr.num_args; ++i) {
-         args.push_back(ReadRegister(instr.invoke_args_registers[i]));
+          args.push_back(ReadRegister(instr.invoke_args_registers[i]));
         }
         InvokeGlobal(exec->functions[instr.func_index], args);
         frames.back().caller_return_register = instr.dst;
@@ -922,7 +927,7 @@ void VirtualMachine::RunLoop() {
           args.push_back(arg);
         }
 
-        // We no longer need to write the registers back, we write direclty
+        // We no longer need to write the registers back, we write directly
         // through the registers mutably.
         InvokePacked(instr.packed_index, func, arity, instr.output_size, args);
         pc++;
@@ -988,13 +993,15 @@ void VirtualMachine::RunLoop() {
       }
       case Opcode::AllocTensor: {
         auto shape = std::vector<int64_t>(instr.alloc_tensor.ndim);
+
         for (uint32_t i = 0; i < instr.alloc_tensor.ndim; ++i) {
           shape[i] = instr.alloc_tensor.shape[i];
         }
-        // TODO(wweic) ctx could be obtained from the ctxs list.
-        auto allocator = MemoryManager::Global()->GetAllocator(ctxs[0]);
-        // TODO(use) storage
-        auto data = allocator->Empty(shape, instr.alloc_tensor.dtype, ctxs[0]);
+
+        auto storage_obj = ReadRegister(instr.alloc_tensor.storage);
+        auto storage = Downcast<Storage>(storage_obj);
+        auto data = storage->AllocNDArray(0, shape, instr.alloc_tensor.dtype);
+
         auto obj = Tensor(data);
         WriteRegister(instr.dst, obj);
         pc++;
@@ -1004,19 +1011,22 @@ void VirtualMachine::RunLoop() {
         DLContext cpu_ctx;
         cpu_ctx.device_type = kDLCPU;
         cpu_ctx.device_id = 0;
-
         auto shape_tensor_obj = ReadRegister(instr.alloc_tensor_reg.shape_register);
         const auto* tensor = shape_tensor_obj.as<TensorObj>();
         CHECK(tensor != nullptr);
         NDArray shape_tensor = tensor->data.CopyTo(cpu_ctx);
-
-        int64_t* dims = static_cast<int64_t*>(shape_tensor->data);
+        const DLTensor* dl_tensor = shape_tensor.operator->();
+        CHECK_EQ(dl_tensor->dtype.code, 0u);
+        CHECK_LE(dl_tensor->dtype.bits, 64);
+        int64_t* dims = reinterpret_cast<int64_t*>(dl_tensor->data);
         auto num_dims = shape_tensor->shape[0];
-        auto shape = std::vector<int64_t>(shape_tensor->shape[0]);
+        auto shape = std::vector<int64_t>(num_dims);
         shape.assign(dims, dims + num_dims);
-        // TODO(wweic) ctx could be obtained from the ctxs list.
-        auto allocator = MemoryManager::Global()->GetAllocator(ctxs[0]);
-        auto data = allocator->Empty(shape, instr.alloc_tensor_reg.dtype, ctxs[0]);
+
+        auto storage_obj = ReadRegister(instr.alloc_tensor_reg.storage);
+        auto storage = Downcast<Storage>(storage_obj);
+        auto data = storage->AllocNDArray(0, shape, instr.alloc_tensor_reg.dtype);
+
         auto obj = Tensor(data);
         WriteRegister(instr.dst, obj);
         pc++;

@@ -315,6 +315,8 @@ class Function(Expr):
             if isinstance(value, NDArray):
                 params[key] = Constant(value)
 
+        return _expr.FunctionSetParams(self, params)
+
     def set_attribute(self, name, ref):
         return _expr.FunctionSetAttr(self, name, ref)
 
