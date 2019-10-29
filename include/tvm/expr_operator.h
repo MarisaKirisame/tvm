@@ -28,10 +28,10 @@
 #ifndef TVM_EXPR_OPERATOR_H_
 #define TVM_EXPR_OPERATOR_H_
 
-#include <tvm/expr.h>
-#include <tvm/ir.h>
 #include <algorithm>
 #include <type_traits>
+#include "expr.h"
+#include "ir.h"
 
 namespace tvm {
 
