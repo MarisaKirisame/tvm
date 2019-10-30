@@ -33,22 +33,22 @@ from .interpreter import Executor
 Tensor = _obj.Tensor
 ADT = _obj.ADT
 
-def _convert(arg, cargs):
+def _convert(arg, cargs, ctx):
     if isinstance(arg, (np.ndarray, tvm.nd.NDArray)):
-        cargs.append(_obj.Tensor(arg))
+        cargs.append(_obj.Tensor(arg, ctx))
     elif isinstance(arg, (tuple, list)):
         field_args = []
         for field in arg:
-            _convert(field, field_args)
+            _convert(field, field_args, ctx)
         cargs.append(_obj.tuple_object(field_args))
     else:
         raise "unsupported type"
 
 
-def convert(args):
+def convert(args, ctx):
     cargs = []
     for arg in args:
-        _convert(arg, cargs)
+        _convert(arg, cargs, ctx)
 
     return cargs
 
@@ -259,6 +259,7 @@ class VirtualMachine(object):
         ctx : :py:class:`TVMContext`
             The runtime context to run the code on.
         """
+        self.ctx = ctx
         args = [ctx.device_type, ctx.device_id]
         self._init(*args)
 
@@ -278,7 +279,7 @@ class VirtualMachine(object):
         result : Object
             The output.
         """
-        cargs = convert(args)
+        cargs = convert(args, self.ctx)
         return self._invoke(func_name, *cargs)
 
     def run(self, *args):

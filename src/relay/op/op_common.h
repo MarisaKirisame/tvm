@@ -86,7 +86,8 @@ namespace relay {
     .set_attr<TOpPattern>("TOpPattern", kBroadcast)               \
     .set_attr<TOpIsStateful>("TOpIsStateful", false)              \
     .set_attr<FInferCorrectLayout>("FInferCorrectLayout",         \
-                                   BinaryBroadcastLayout)
+                                   BinaryBroadcastLayout)         \
+    .set_attr<TOpDynamicCompute>("TOpDynamicCompute", true)       \
 
 // Comparisons
 #define RELAY_REGISTER_CMP_OP(OpName)                             \

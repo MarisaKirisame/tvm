@@ -158,7 +158,7 @@ def get_const_int(exp):
     if not isinstance(exp, (expr.IntImm, expr.UIntImm)):
         exp = ir_pass.Simplify(exp)
     if not isinstance(exp, (expr.IntImm, expr.UIntImm)):
-        raise ValueError("Expect value to be constant int")
+        raise ValueError("Expect value to be constant int, but is: " + str(exp))
     return exp.value
 
 

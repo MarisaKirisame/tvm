@@ -27,7 +27,10 @@
 #include <tvm/runtime/vm.h>
 #include <tvm/runtime/memory.h>
 #include <tvm/runtime/object.h>
+#include <tvm/relay/expr.h>
+#include <tvm/relay/type.h>
 
+#include "../../relay/backend/compile_engine.h"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
@@ -39,6 +42,73 @@
 #include "naive_allocator.h"
 
 using namespace tvm::runtime;
+
+namespace tvm {
+namespace relay {
+
+using InlineCacheKey = std::vector<size_t>;
+InlineCacheKey* UpdateICK(InlineCacheKey* ick, const NDArray& v) {
+  for (auto x : v.Shape()) {
+    ick->push_back(x);
+  }
+  return ick;
+}
+
+PackedFunc InlineJIT(const Function& func, Target target) {
+  // Arity calculation must flatten tuples.
+  size_t arity = 0;
+  for (size_t i = 0; i < func->params.size(); i++) {
+    auto ty = func->params[i]->checked_type();
+    if (ty.as<TensorTypeNode>()) {
+      arity += 1;
+    } else if (auto tuple_ty = ty.as<TupleTypeNode>()) {
+      for (size_t f = 0; f < tuple_ty->fields.size(); f++) {
+        const auto& field = tuple_ty->fields[f];
+        CHECK(field.as<TensorTypeNode>())
+          << "only supports non-nested tuples currently "
+          << "found " << field;
+      }
+      arity += tuple_ty->fields.size();
+    } else {
+      LOG(FATAL) << "unsupported parameter type " << ty;
+    }
+  }
+
+  using JITMap = std::map<InlineCacheKey, PackedFunc>;
+  auto jit_map = JITMap();
+  auto type = Downcast<FuncType>(func->checked_type());
+  return PackedFunc([=](TVMArgs args, TVMRetValue* rv) mutable {
+    InlineCacheKey ick;
+    for (size_t i = 0; i < arity; ++i) {
+      NDArray arr = args[i];
+      UpdateICK(&ick, arr);
+    }
+    tvm::Map<Var, Expr> bindings;
+    if (jit_map.count(ick) == 0) {
+      auto func_type = Downcast<FuncType>(func->checked_type());
+      for (size_t i = 0; i < func->params.size(); ++i) {
+        auto int_shape = NDArray(args[i]).Shape();
+        tvm::Array<tvm::Expr> shape;
+        for (auto s : int_shape) {
+          shape.push_back(tvm::Expr(static_cast<int32_t>(s)));
+        }
+        auto dtype = Downcast<TensorType>(func_type->arg_types[i])->dtype;
+        bindings.Set(func->params[i],
+                     VarNode::make("new_var", TensorTypeNode::make(shape, dtype)));
+      }
+      auto new_func_untyped = Downcast<Function>(Subst(func, bindings));
+      auto new_func = Downcast<Function>(InferType(new_func_untyped, Module(), GlobalVar()));
+      auto key = CCacheKeyNode::make(new_func, target);
+      auto ce = CompileEngine::Global();
+      auto jit_pf = ce->JIT(key);
+      jit_map.insert({ick, jit_pf});
+    }
+    jit_map.at(ick).CallPacked(args, rv);
+  });
+};
+
+}
+}
 
 namespace tvm {
 namespace runtime {
@@ -750,7 +820,7 @@ void VirtualMachine::InvokeGlobal(const VMFunction& func, const std::vector<Obje
   for (size_t i = 0; i < args.size(); ++i) {
     WriteRegister(i, args[i]);
   }
-  DLOG(INFO) << "func.params= " << func.params.size();
+  DLOG(INFO) << "func.params= " << func.params.size() << std::endl;
 
   code = func.instructions.data();
   pc = 0;
@@ -763,7 +833,7 @@ ObjectRef VirtualMachine::Invoke(const VMFunction& func, const std::vector<Objec
   RunLoop();
   // TODO(wweic) ctx could be obtained from the ctxs list.
   auto alloc = MemoryManager::Global()->GetAllocator(ctxs[0]);
-  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B";
+  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B" << std::endl;
   return return_register;
 }
 
@@ -812,6 +882,14 @@ void VirtualMachine::LoadExecutable(const Executable* exec) {
   CHECK(exec) << "The executable is not created yet.";
   this->exec = exec;
 
+  auto AssignPackedFunc = [&](const PackedFunc& pf, size_t idx) {
+    if (packed_funcs.size() <= idx) {
+      packed_funcs.resize(idx + 1);
+    }
+    CHECK(packed_funcs[idx] == nullptr);
+    packed_funcs[idx] = pf;
+  };
+
   runtime::Module lib = this->exec->lib;
   // Get the list of packed functions.
   CHECK(exec->primitive_map.empty() || lib.operator->())
@@ -820,13 +898,15 @@ void VirtualMachine::LoadExecutable(const Executable* exec) {
   for (const auto& it : this->exec->primitive_map) {
     const auto& packed_name = it.first;
     auto packed_index = static_cast<size_t>(it.second);
-    if (packed_funcs.size() <= packed_index) {
-      packed_funcs.resize(packed_index + 1);
-    }
-    packed_funcs[packed_index] = lib.GetFunction(packed_name);
+    AssignPackedFunc(lib.GetFunction(packed_name), packed_index);
+  }
+
+  for (const auto& it : this->exec->inline_jit_map) {
+    const auto& func = it.first;
+    auto packed_index = static_cast<size_t>(it.second);
+    AssignPackedFunc(relay::InlineJIT(func, exec->target), packed_index);
   }
 }
-
 
 void VirtualMachine::Init(const std::vector<TVMContext>& ctxs) {
   this->ctxs = ctxs;
@@ -865,9 +945,9 @@ void VirtualMachine::RunLoop() {
   while (true) {
   main_loop:
     auto const& instr = this->code[this->pc];
-    DLOG(INFO) << "Executing(" << pc << "): " << instr;
+    DLOG(INFO) << "Executing(" << pc << "): " << instr << std::endl;
 #if USE_RELAY_DEBUG
-    InstructionPrint(std::cout, instr);
+    std::cout << instr << std::endl;
 #endif  // USE_RELAY_DEBUG
 
     switch (instr.op) {

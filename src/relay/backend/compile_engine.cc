@@ -21,6 +21,7 @@
  * \file relay/backend/compile_engine.cc
  * \brief Internal compialtion engine.
  */
+#include <tvm/ir.h>
 #include <tvm/schedule.h>
 #include <tvm/packed_func_ext.h>
 #include <tvm/operation.h>
@@ -58,7 +59,7 @@ struct IsDynamicVisitor : public TypeVisitor {
   bool is_dyn{false};
   void VisitType_(const TensorTypeNode* tt) {
     for (auto dim : tt->shape) {
-      if (dim.as<Any>()) {
+      if (!dim.as<IntImm>()) {
         is_dyn = true;
         break;
       }
@@ -88,8 +89,11 @@ Array<IndexExpr> GetShape(const Array<IndexExpr>& shape) {
       res.push_back(ir::IntImm::make(Int(32), *pval));
     } else if (val->IsInstance<ir::Any>()) {
       res.push_back(val.as<ir::Any>()->ToVar());
-    } else {
+    } else if (auto* v = val.as<ir::Variable>()) {
+      CHECK_EQ(v->type, Int(32));
       res.push_back(val);
+    } else {
+      LOG(FATAL) << "unknown shape:" << val << std::endl;
     }
   }
   return res;
@@ -432,6 +436,9 @@ class MakeShapeFunc : public ExprFunctor<Array<Tensor>(const Expr&)> {
         // or the shape of a var each time.
         memo_[expr] = res;
       }
+      for (const auto& t : res) {
+        CHECK_EQ(t->dtype, Int(64));
+      }
       return res;
     }
   }
@@ -753,7 +760,7 @@ class CompileEngineImpl : public CompileEngineNode {
 /*! \brief The global compile engine */
 const CompileEngine& CompileEngine::Global() {
   // intentionally allocate raw pointer to avoid
-  // free during destructuion.
+  // free during destruction.
   static CompileEngine* inst = new CompileEngine(
       make_node<CompileEngineImpl>());
   return *inst;

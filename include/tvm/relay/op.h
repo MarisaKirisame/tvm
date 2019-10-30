@@ -535,14 +535,18 @@ inline const TVMRetValue& GenericOpMap::operator[](const Op& op) const {
   CHECK(op.defined());
   const uint32_t idx = op->index_;
   CHECK(idx < data_.size() && data_[idx].second != 0)
-      << "Attribute " << attr_name_ << " has not been registered for Operator "
-      << op->name;
+    << "Attribute " << attr_name_ << " has not been registered for Operator "
+    << op->name;
   return data_[idx].first;
 }
 
 template <typename ValueType>
 inline ValueType GenericOpMap::get(const Op& op, ValueType value) const {
   CHECK(op.defined());
+  if (count(op) == 0) {
+    std::cout << "Attribute " << attr_name_ << " has not been registered for Operator "
+              << op->name << std::endl;
+  }
   const uint32_t idx = op->index_;
   if (idx < data_.size() && data_[idx].second != 0) {
     return data_[idx].first;
@@ -554,6 +558,10 @@ inline ValueType GenericOpMap::get(const Op& op, ValueType value) const {
 template <typename ValueType>
 inline ValueType GenericOpMap::get(const Expr& expr, ValueType value) const {
   CHECK(expr.defined());
+  if (expr.as<OpNode>() && count(Downcast<Op>(expr)) == 0) {
+    std::cout << "Attribute " << attr_name_ << " has not been registered for Operator "
+              << Downcast<Op>(expr)->name << std::endl;
+  }
   if (const OpNode* op = expr.as<OpNode>()) {
     const uint32_t idx = op->index_;
     if (idx < data_.size() && data_[idx].second != 0) {

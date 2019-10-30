@@ -27,6 +27,9 @@
 #include <tvm/runtime/object.h>
 #include <tvm/runtime/packed_func.h>
 #include <tvm/runtime/registry.h>
+#include <tvm/node/node.h>
+#include <tvm/relay/expr.h>
+#include <tvm/build_module.h>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -534,7 +537,7 @@ class Executable : public ModuleNode {
    */
   std::string GetBytecode() const;
 
-/*!
+  /*!
    * \brief Print the detailed statistics of the given code, i.e. number of
    * globls and constants, etc.
    */
@@ -564,10 +567,18 @@ class Executable : public ModuleNode {
    * corresponds to the position of the `packed_funcs` list in a `VirtualMachine` object.
    */
   std::unordered_map<std::string, Index> primitive_map;
+  std::unordered_map<relay::Function, Index, NodeHash, NodeEqual> inline_jit_map;
   /*! \brief The virtual machine's function table. */
   std::vector<VMFunction> functions;
+  size_t NewPackedFuncIndex() {
+    ++next_packed_func_index;
+    return next_packed_func_index - 1;
+  }
 
+  Target target;
  private:
+  size_t next_packed_func_index = 0;
+
   /*!
    * \brief Save the globals.
    *
@@ -677,6 +688,16 @@ class VirtualMachine : public runtime::ModuleNode {
                             Index output_size,
                             const std::vector<ObjectRef>& args);
 
+  /*! \brief Construct a invoke packed instruction.
+   *  \param pf The PackedFunc.
+   *  \param arity The arity of the function.
+   *  \param output_size The number of outputs of the packed function.
+   *  \param args The argument registers.
+   *  \return The invoke packed instruction.
+   */
+  Instruction InvokeNewPacked(const PackedFunc& pf, Index arity, Index output_size,
+                              const std::vector<RegName>& args);
+
   virtual ~VirtualMachine() {}
 
   const char* type_key() const final {
@@ -693,6 +714,8 @@ class VirtualMachine : public runtime::ModuleNode {
  protected:
   /*! \brief The virtual machine's packed function table. */
   std::vector<PackedFunc> packed_funcs;
+  /*! \brief The virtual machine's function table. */
+  std::vector<VMFunction> functions;
   /*! \brief The current stack of call frames. */
   std::vector<VMFrame> frames;
   /*! \brief The fuction table index of the current function. */

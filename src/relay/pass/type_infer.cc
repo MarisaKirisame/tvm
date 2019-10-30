@@ -800,8 +800,7 @@ void EnsureCheckedType(const Expr& e) {
 }
 
 Expr InferType(const Expr& expr, const Module& mod) {
-  auto main = mod->GetGlobalVar("main");
-  auto inferencer = TypeInferencer(mod, main);
+  auto inferencer = TypeInferencer(mod, GlobalVar());
   auto e = inferencer.Infer(expr);
   CHECK(WellFormed(e));
   auto free_tvars = FreeTypeVars(e, mod);
@@ -812,9 +811,10 @@ Expr InferType(const Expr& expr, const Module& mod) {
 }
 
 Function InferType(const Function& func,
-                   const Module& mod,
-                   const GlobalVar& var) {
-  CHECK(mod.defined()) << "internal error: module must be set for type inference";
+                   const Module& mod_,
+                   const GlobalVar& var_) {
+  Module mod = mod_.defined() ? mod_ : ModuleNode::make({}, {});
+  GlobalVar var = var_.defined() ? var_ : GlobalVarNode::make("infer_type_dummy");
   Function func_copy = Function(make_node<FunctionNode>(*func.operator->()));
   func_copy->checked_type_ = func_copy->func_type_annotation();
   mod->AddUnchecked(var, func_copy);
