@@ -535,8 +535,8 @@ inline const TVMRetValue& GenericOpMap::operator[](const Op& op) const {
   CHECK(op.defined());
   const uint32_t idx = op->index_;
   CHECK(idx < data_.size() && data_[idx].second != 0)
-      << "Attribute " << attr_name_ << " has not been registered for Operator "
-      << op->name;
+    << "Attribute " << attr_name_ << " has not been registered for Operator "
+    << op->name;
   return data_[idx].first;
 }
 

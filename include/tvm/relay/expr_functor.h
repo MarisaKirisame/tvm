@@ -230,6 +230,49 @@ class ExprMutator
   std::unordered_map<Expr, Expr, NodeHash, NodeEqual> memo_;
 };
 
+/*! \brief A helper class for matching and rewriting operators. */
+template<typename R>
+class OpMatch {
+ public:
+  using MatchFunc =
+      std::function<R(const Array<Expr>& args, const Attrs& attrs, const Array<Type>& type_args)>;
+
+  /*! \brief Match an operator with the given name.
+   *  \param op_name The name of the operator to match.
+   *  \param func The function to execute when it matches.
+   *  \return A self-reference for builder style API.
+   */
+  inline OpMatch& Match(const std::string& op_name, MatchFunc func) {
+    auto op = Op::Get(op_name);
+    match_map_.insert({op, func});
+    return *this;
+  }
+
+  /*! \brief Rewrite a call operation based on the operator and the registered
+   *  match functions.
+   * \param call The call to rewrite.
+   * \return The result of rewriting.
+   */
+  inline R operator()(const Call& call) {
+    auto it = match_map_.find(Downcast<Op>(call->op));
+    if (it != match_map_.end()) {
+      return it->second(call->args, call->attrs, call->type_args);
+    } else {
+      if (default_ != nullptr) {
+        return default_(call->args, call->attrs, call->type_args);
+      } else {
+        LOG(FATAL) << "unexpected operation " << call->op;
+      }
+    }
+  }
+
+ private:
+  /*! \brief The match function map. */
+  std::unordered_map<Op, MatchFunc, NodeHash, NodeEqual> match_map_;
+  /*! \brief An optional default case. */
+  MatchFunc default_;
+};
+
 /*!
  * \brief recursively visit the ir in post DFS order node, apply fvisit
  * Each node is guaranteed to be visited only once.

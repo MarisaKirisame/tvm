@@ -849,7 +849,7 @@ def device_copy(data, src_dev, dst_dev):
     return _make.device_copy(data, src_dev, dst_dev)
 
 
-def shape_of(data, dtype="int32"):
+def shape_of(data, dtype="int64"):
     """Get shape of a tensor.
 
     Parameters

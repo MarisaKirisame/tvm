@@ -19,7 +19,8 @@
 from __future__ import absolute_import
 import topi
 from .op import register_compute, register_schedule, register_pattern, register_shape_func
-from .op import schedule_injective, OpPattern
+from .op import schedule_injective, OpPattern, broadcast_shape_func, identity_shape_func
+from .op import register_is_stateful, register_dynamic_compute
 from ...hybrid import script
 
 schedule_broadcast = schedule_injective
@@ -33,6 +34,7 @@ register_schedule("atan", schedule_broadcast)
 register_schedule("exp", schedule_broadcast)
 register_schedule("erf", schedule_broadcast)
 register_schedule("sqrt", schedule_broadcast)
+register_dynamic_compute("sqrt", True)
 register_schedule("rsqrt", schedule_broadcast)
 register_schedule("sigmoid", schedule_broadcast)
 register_schedule("floor", schedule_broadcast)
@@ -44,6 +46,8 @@ register_schedule("abs", schedule_broadcast)
 register_schedule("tanh", schedule_broadcast)
 register_schedule("logical_not", schedule_broadcast)
 register_schedule("negative", schedule_broadcast)
+register_shape_func("negative", False, identity_shape_func)
+register_dynamic_compute("negative", True)
 register_schedule("copy", schedule_broadcast)
 
 register_schedule("add", schedule_broadcast)
@@ -55,16 +59,20 @@ register_schedule("mod", schedule_broadcast)
 register_schedule("logical_and", schedule_broadcast)
 register_schedule("logical_or", schedule_broadcast)
 register_schedule("equal", schedule_broadcast)
+register_dynamic_compute("equal", True)
 register_schedule("not_equal", schedule_broadcast)
 register_schedule("less", schedule_broadcast)
+register_dynamic_compute("less", True)
 register_schedule("less_equal", schedule_broadcast)
 register_schedule("greater", schedule_broadcast)
+register_dynamic_compute("greater", True)
 register_schedule("greater_equal", schedule_broadcast)
 register_schedule("maximum", schedule_injective)
 register_schedule("minimum", schedule_injective)
 register_schedule("right_shift", schedule_injective)
 register_schedule("left_shift", schedule_injective)
 register_schedule("shape_of", schedule_injective)
+register_dynamic_compute("shape_of", True)
 
 # zeros
 @register_compute("zeros")
@@ -82,6 +90,8 @@ def zeros_like_compute(attrs, inputs, output_type, target):
     return [topi.full_like(inputs[0], 0.0)]
 
 register_schedule("zeros_like", schedule_broadcast)
+register_dynamic_compute("zeros_like", True)
+register_shape_func("zeros_like", False, identity_shape_func)
 
 # ones
 @register_compute("ones")
@@ -99,6 +109,8 @@ def ones_like(attrs, inputs, output_type, target):
     return [topi.full_like(inputs[0], 1.0)]
 
 register_schedule("ones_like", schedule_broadcast)
+register_dynamic_compute("ones_like", True)
+register_shape_func("ones_like", False, identity_shape_func)
 
 # clip
 @register_compute("clip")
@@ -165,7 +177,6 @@ def broadcast_shape_func(attrs, inputs, out_ndims):
 
 register_shape_func("expand_dims", False, expand_dims_shape_func)
 register_shape_func("cast", False, cast_shape_func)
-
 register_shape_func("add", False, broadcast_shape_func)
 register_shape_func("subtract", False, broadcast_shape_func)
 register_shape_func("multiply", False, broadcast_shape_func)

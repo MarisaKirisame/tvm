@@ -32,6 +32,11 @@ schedule_concatenate = _reg.schedule_concatenate
 
 
 _reg.register_schedule("collapse_sum_like", _schedule_reduce)
+_reg.register_is_stateful("collapse_sum_like", False)
+_reg.register_dynamic_compute("collapse_sum_like", False)
+@_reg.register_shape_func("collapse_sum_like", False)
+def collapse_sum_like_shape_func(_, args, ndims):
+    return [_reg._identity_shape_func(args[1], ndims[0])]
 _reg.register_schedule("broadcast_to", schedule_broadcast)
 _reg.register_schedule("broadcast_to_like", schedule_broadcast)
 _reg.register_schedule("expand_dims", schedule_broadcast)
@@ -45,14 +50,37 @@ _reg.register_schedule("reverse", schedule_injective)
 _reg.register_schedule("repeat", schedule_broadcast)
 _reg.register_schedule("tile", schedule_broadcast)
 _reg.register_schedule("cast", schedule_injective)
+_reg.register_is_stateful("cast", False)
 _reg.register_schedule("cast_like", schedule_injective)
 _reg.register_schedule("reinterpret", schedule_injective)
 _reg.register_schedule("strided_slice", schedule_injective)
 _reg.register_schedule("slice_like", schedule_injective)
 _reg.register_schedule("split", schedule_injective)
 _reg.register_schedule("take", schedule_injective)
+_reg.register_is_stateful("take", False)
 _reg.register_schedule("transpose", schedule_injective)
+_reg.register_is_stateful("transpose", False)
+
+@script
+def _transpose_shape_func(x, ndim):
+    out = output_tensor((ndim,), x.dtype)
+    out[1] = x[0]
+    out[0] = x[1]
+    return out
+
+@_reg.register_shape_func("transpose", False)
+def transpose_shape_func(attrs, args, ndims):
+    (x,) = args
+    (ndim,) = ndims
+    assert int(ndim) == 2
+    assert int(x.shape[0]) == int(ndim)
+    return [_transpose_shape_func(x, ndim)]
+
 _reg.register_schedule("where", schedule_broadcast)
+_reg.register_is_stateful("where", False)
+@_reg.register_shape_func("where", False)
+def where_shape_func(attrs, args, ndims):
+    return [_reg._identity_shape_func(args[0], ndims[0])]
 _reg.register_schedule("stack", schedule_injective)
 _reg.register_schedule("concatenate", schedule_concatenate)
 _reg.register_schedule("_contrib_reverse_reshape", schedule_injective)
@@ -68,18 +96,21 @@ _reg.register_pattern("layout_transform", OpPattern.INJECTIVE)
 # shape func
 @script
 def _arange_shape_func(start, stop, step):
-    out = output_tensor((1,), "int64")
+    out = output_tensor((1,), x.dtype)
     out[0] = int64(ceil_div((int64(stop[0]) - int64(start[0])), int64(step[0])))
     return out
+
 
 @_reg.register_shape_func("arange", True)
 def arange_shape_func(attrs, inputs, _):
     return [_arange_shape_func(*inputs)]
 
+_reg.register_dynamic_compute("arange", True)
+
 @script
 def _concatenate_shape_func(inputs, axis):
     ndim = inputs[0].shape[0]
-    out = output_tensor((ndim,), "int64")
+    out = output_tensor((ndim,), x.dtype)
     for i in const_range(ndim):
         if i != axis:
             out[i] = inputs[0][i]
@@ -92,6 +123,7 @@ def _concatenate_shape_func(inputs, axis):
                 out[i] += inputs[j][i]
     return out
 
+
 @_reg.register_shape_func("concatenate", False)
 def concatenate_shape_func(attrs, inputs, _):
     axis = get_const_int(attrs.axis)
@@ -99,7 +131,7 @@ def concatenate_shape_func(attrs, inputs, _):
 
 @script
 def _reshape_shape_func(data_shape, newshape, ndim):
-    out = output_tensor((ndim,), "int64")
+    out = output_tensor((ndim,), x.dtype)
     src_idx = 0
     dst_idx = 0
     infer_idx = -1
@@ -164,21 +196,24 @@ def _reshape_shape_func(data_shape, newshape, ndim):
             out[infer_idx] = old_size // new_size
     return out
 
+
 @_reg.register_shape_func("reshape", False)
 def reshape_shape_func(attrs, inputs, out_ndims):
     newshape = get_const_tuple(attrs.newshape)
     return [_reshape_shape_func(inputs[0], convert(newshape), out_ndims[0])]
 
+
 @script
 def _take_no_axis_shape_func(indices_shape, out_ndim):
-    out = output_tensor((out_ndim,), "int64")
+    out = output_tensor((out_ndim,), x.dtype)
     for i in const_range(out_ndim):
         out[i] = indices_shape[i]
     return out
 
+
 @script
 def _take_with_axis_shape_func(data_shape, indices_shape, axis, out_ndim):
-    out = output_tensor((out_ndim,), "int64")
+    out = output_tensor((out_ndim,), data_shape.dtype)
     for i in const_range(axis):
         out[i] = data_shape[i]
     if len(indices_shape.shape) == 0:
@@ -191,6 +226,7 @@ def _take_with_axis_shape_func(data_shape, indices_shape, axis, out_ndim):
         for i in const_range(axis+1, len(data_shape)):
             out[len(indices_shape)+i-1] = data_shape[i]
     return out
+
 
 @_reg.register_shape_func("take", False)
 def take_shape_func(attrs, inputs, out_ndims):
@@ -209,7 +245,7 @@ def take_shape_func(attrs, inputs, out_ndims):
 
 @script
 def _argwhere_shape_func_1d(condition):
-    out = output_tensor((2, ), "int64")
+    out = output_tensor((2, ), x.dtype)
     out[0] = int64(0)
     out[1] = int64(1)
     for i1 in range(condition.shape[0]):
@@ -217,9 +253,10 @@ def _argwhere_shape_func_1d(condition):
             out[0] += int64(1)
     return out
 
+
 @script
 def _argwhere_shape_func_2d(condition):
-    out = output_tensor((2, ), "int64")
+    out = output_tensor((2, ), x.dtype)
     out[0] = int64(0)
     out[1] = int64(2)
     for i1 in range(condition.shape[0]):
@@ -228,9 +265,10 @@ def _argwhere_shape_func_2d(condition):
                 out[0] += int64(1)
     return out
 
+
 @script
 def _argwhere_shape_func_3d(condition):
-    out = output_tensor((2, ), "int64")
+    out = output_tensor((2, ), x.dtype)
     out[0] = int64(0)
     out[1] = int64(3)
     for i1 in range(condition.shape[0]):
@@ -240,9 +278,10 @@ def _argwhere_shape_func_3d(condition):
                     out[0] += int64(1)
     return out
 
+
 @script
 def _argwhere_shape_func_4d(condition):
-    out = output_tensor((2, ), "int64")
+    out = output_tensor((2, ), x.dtype)
     out[0] = int64(0)
     out[1] = int64(4)
     for i1 in range(condition.shape[0]):
@@ -253,9 +292,10 @@ def _argwhere_shape_func_4d(condition):
                         out[0] += int64(1)
     return out
 
+
 @script
 def _argwhere_shape_func_5d(condition):
-    out = output_tensor((2, ), "int64")
+    out = output_tensor((2, ), x.dtype)
     out[0] = int64(0)
     out[1] = int64(5)
     for i1 in range(condition.shape[0]):
@@ -266,6 +306,7 @@ def _argwhere_shape_func_5d(condition):
                         if condition[i1, i2, i3, i4, i5] != 0:
                             out[0] += int64(1)
     return out
+
 
 @_reg.register_shape_func("argwhere", True)
 def argwhere_shape_func(attrs, inputs, out_ndims):
@@ -283,6 +324,7 @@ def argwhere_shape_func(attrs, inputs, out_ndims):
     elif len(inputs[0].shape) == 5:
         return [_argwhere_shape_func_5d(inputs[0])]
     return ValueError("Does not support rank higher than 5 in argwhere")
+
 
 @_reg.register_schedule("argwhere")
 def schedule_argwhere(_, outs, target):
