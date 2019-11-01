@@ -25,12 +25,7 @@
 #include <dmlc/memory_io.h>
 #include <tvm/logging.h>
 #include <tvm/runtime/vm.h>
-#include <tvm/runtime/memory.h>
-#include <tvm/runtime/object.h>
-#include <tvm/relay/expr.h>
-#include <tvm/relay/type.h>
 
-#include "../../relay/backend/compile_engine.h"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
@@ -44,120 +39,8 @@
 using namespace tvm::runtime;
 
 namespace tvm {
-namespace relay {
-
-using InlineCacheKey = std::vector<size_t>;
-InlineCacheKey* UpdateICK(InlineCacheKey* ick, const NDArray& v) {
-  for (auto x : v.Shape()) {
-    ick->push_back(x);
-  }
-  return ick;
-}
-
-PackedFunc InlineJIT(const Function& func, Target target) {
-  // Arity calculation must flatten tuples.
-  size_t arity = 0;
-  for (size_t i = 0; i < func->params.size(); i++) {
-    auto ty = func->params[i]->checked_type();
-    if (ty.as<TensorTypeNode>()) {
-      arity += 1;
-    } else if (auto tuple_ty = ty.as<TupleTypeNode>()) {
-      for (size_t f = 0; f < tuple_ty->fields.size(); f++) {
-        const auto& field = tuple_ty->fields[f];
-        CHECK(field.as<TensorTypeNode>())
-          << "only supports non-nested tuples currently "
-          << "found " << field;
-      }
-      arity += tuple_ty->fields.size();
-    } else {
-      LOG(FATAL) << "unsupported parameter type " << ty;
-    }
-  }
-
-  using JITMap = std::map<InlineCacheKey, PackedFunc>;
-  auto jit_map = JITMap();
-  auto type = Downcast<FuncType>(func->checked_type());
-  return PackedFunc([=](TVMArgs args, TVMRetValue* rv) mutable {
-    InlineCacheKey ick;
-    for (size_t i = 0; i < arity; ++i) {
-      NDArray arr = args[i];
-      UpdateICK(&ick, arr);
-    }
-    tvm::Map<Var, Expr> bindings;
-    if (jit_map.count(ick) == 0) {
-      auto func_type = Downcast<FuncType>(func->checked_type());
-      for (size_t i = 0; i < func->params.size(); ++i) {
-        auto int_shape = NDArray(args[i]).Shape();
-        tvm::Array<tvm::Expr> shape;
-        for (auto s : int_shape) {
-          shape.push_back(tvm::Expr(static_cast<int32_t>(s)));
-        }
-        auto dtype = Downcast<TensorType>(func_type->arg_types[i])->dtype;
-        bindings.Set(func->params[i],
-                     VarNode::make("new_var", TensorTypeNode::make(shape, dtype)));
-      }
-      auto new_func_untyped = Downcast<Function>(Subst(func, bindings));
-      auto new_func = Downcast<Function>(InferType(new_func_untyped, Module(), GlobalVar()));
-      auto key = CCacheKeyNode::make(new_func, target);
-      auto ce = CompileEngine::Global();
-      auto jit_pf = ce->JIT(key);
-      jit_map.insert({ick, jit_pf});
-    }
-    jit_map.at(ick).CallPacked(args, rv);
-  });
-};
-
-}
-}
-
-namespace tvm {
 namespace runtime {
 namespace vm {
-
-// Cutomized reclamation of buffers.
-class StorageAllocator :
-      public ObjAllocatorBase<StorageAllocator> {
- public:
-  template<typename T>
-  class Handler {
-   public:
-    template<typename... Args>
-    static T* New(StorageAllocator*, Args&&... args) {
-      static_assert(std::is_base_of<StorageObj, T>::value,
-                  "make_storage can only be used to create storage objects");
-      // NOTE: the first argument is not needed for SimpleObjAllocator
-      // It is reserved for special allocators that needs to recycle
-      // the object to itself (e.g. in the case of object pool).
-      //
-      // In the case of an object pool, an allocator needs to create
-      // a special chunk memory that hides reference to the allocator
-      // and call allocator's release function in the deleter.
-      return new T(std::forward<Args>(args)...);
-    }
-
-    static Object::FDeleter Deleter() {
-      return Deleter_;
-    }
-
-   private:
-    static void Deleter_(Object* ptr) {
-      auto storage_ptr = static_cast<StorageObj*>(ptr);
-      auto alloc = MemoryManager::Global()->GetAllocator(storage_ptr->buffer.ctx);
-      alloc->Free(storage_ptr->buffer);
-      delete ptr;
-    }
-  };
-};
-
-inline Storage make_storage(size_t size, size_t alignment, TVMType dtype_hint, TVMContext ctx) {
-  // We could put cache in here, from ctx to storage allocator.
-  auto storage_obj = StorageAllocator().make<StorageObj>();
-  auto alloc = MemoryManager::Global()->GetAllocator(ctx);
-  DCHECK(alloc != nullptr)
-    << "allocator must not null";
-  storage_obj->buffer = alloc->Alloc(size, alignment, dtype_hint);
-  return Storage(storage_obj);
-}
 
 Instruction::Instruction() {}
 
@@ -182,14 +65,12 @@ Instruction::Instruction(const Instruction& instr) {
       this->result = instr.result;
       return;
     case Opcode::AllocTensor:
-      this->alloc_tensor.storage = instr.alloc_tensor.storage;
       this->alloc_tensor.ndim = instr.alloc_tensor.ndim;
       this->alloc_tensor.shape = Duplicate<int64_t>(instr.alloc_tensor.shape,
                                                     instr.alloc_tensor.ndim);
       this->alloc_tensor.dtype = instr.alloc_tensor.dtype;
       return;
     case Opcode::AllocTensorReg:
-      this->alloc_tensor_reg.storage = instr.alloc_tensor_reg.storage;
       this->alloc_tensor_reg.shape_register = instr.alloc_tensor_reg.shape_register;
       this->alloc_tensor_reg.dtype = instr.alloc_tensor_reg.dtype;
       return;
@@ -238,9 +119,6 @@ Instruction::Instruction(const Instruction& instr) {
     case Opcode::Goto:
       this->pc_offset = instr.pc_offset;
       return;
-    case Opcode::AllocStorage:
-      this->alloc_storage = instr.alloc_storage;
-      return;
     default:
       std::ostringstream out;
       out << "Invalid instruction " << static_cast<int>(instr.op);
@@ -272,14 +150,12 @@ Instruction& Instruction::operator=(const Instruction& instr) {
       this->result = instr.result;
       return *this;
     case Opcode::AllocTensor:
-      this->alloc_tensor.storage = this->alloc_tensor.storage;
       this->alloc_tensor.ndim = instr.alloc_tensor.ndim;
       this->alloc_tensor.shape = Duplicate<int64_t>(instr.alloc_tensor.shape,
                                                     instr.alloc_tensor.ndim);
       this->alloc_tensor.dtype = instr.alloc_tensor.dtype;
       return *this;
     case Opcode::AllocTensorReg:
-      this->alloc_tensor_reg.storage = instr.alloc_tensor_reg.storage;
       this->alloc_tensor_reg.shape_register = instr.alloc_tensor_reg.shape_register;
       this->alloc_tensor_reg.dtype = instr.alloc_tensor_reg.dtype;
       return *this;
@@ -330,8 +206,6 @@ Instruction& Instruction::operator=(const Instruction& instr) {
     case Opcode::Goto:
       this->pc_offset = instr.pc_offset;
       return *this;
-    case Opcode::AllocStorage:
-      this->alloc_storage = instr.alloc_storage;
     default:
       std::ostringstream out;
       out << "Invalid instruction " << static_cast<int>(instr.op);
@@ -350,7 +224,6 @@ Instruction::~Instruction() {
     case Opcode::GetTag:
     case Opcode::Goto:
     case Opcode::LoadConsti:
-    case Opcode::AllocStorage:
     case Opcode::Fatal:
       return;
     case Opcode::AllocTensor:
@@ -406,14 +279,10 @@ Instruction Instruction::InvokePacked(Index packed_index,
   return instr;
 }
 
-Instruction Instruction::AllocTensor(
-  RegName storage,
-  const std::vector<int64_t>& shape,
-  DLDataType dtype, Index dst) {
+Instruction Instruction::AllocTensor(std::vector<int64_t> shape, DLDataType dtype, Index dst) {
   Instruction instr;
   instr.op = Opcode::AllocTensor;
   instr.dst = dst;
-  instr.alloc_tensor.storage = storage;
   instr.alloc_tensor.ndim = shape.size();
   instr.alloc_tensor.shape = new int64_t[shape.size()];
   for (size_t i = 0; i < shape.size(); ++i) {
@@ -423,29 +292,12 @@ Instruction Instruction::AllocTensor(
   return instr;
 }
 
-Instruction Instruction::AllocTensorReg(
-  RegName storage,
-  RegName shape_register,
-  DLDataType dtype, Index dst) {
+Instruction Instruction::AllocTensorReg(RegName shape_register, DLDataType dtype, Index dst) {
   Instruction instr;
   instr.op = Opcode::AllocTensorReg;
   instr.dst = dst;
-  instr.alloc_tensor_reg.storage = storage;
   instr.alloc_tensor_reg.shape_register = shape_register;
   instr.alloc_tensor_reg.dtype = dtype;
-  return instr;
-}
-
-Instruction Instruction::AllocStorage(RegName size,
-  Index alignment,
-  TVMType dtype_hint,
-  Index dst) {
-  Instruction instr;
-  instr.op = Opcode::AllocStorage;
-  instr.dst = dst;
-  instr.alloc_storage.allocation_size = size;
-  instr.alloc_storage.alignment = alignment;
-  instr.alloc_storage.dtype_hint = dtype_hint;
   return instr;
 }
 
@@ -620,8 +472,7 @@ void InstructionPrint(std::ostream& os, const Instruction& instr) {
       break;
     }
     case Opcode::AllocTensor: {
-      os << "alloc_tensor $" << instr.dst << " $"
-         << instr.alloc_tensor.storage << " ["
+      os << "alloc_tensor $" << instr.dst << " ["
          << StrJoin<int64_t>(instr.alloc_tensor.shape, 0,
                              instr.alloc_tensor.ndim)
          << "] ";
@@ -630,7 +481,6 @@ void InstructionPrint(std::ostream& os, const Instruction& instr) {
     }
     case Opcode::AllocTensorReg: {
       os << "alloc_tensor_reg $" << instr.dst << " $"
-         << instr.alloc_tensor_reg.storage << " $"
          << instr.alloc_tensor_reg.shape_register << " ";
       DLDatatypePrint(os, instr.alloc_tensor_reg.dtype);
       break;
@@ -682,14 +532,6 @@ void InstructionPrint(std::ostream& os, const Instruction& instr) {
     }
     case Opcode::Goto: {
       os << "goto " << instr.pc_offset;
-      break;
-    }
-    case Opcode::AllocStorage: {
-      os << "alloc_storage " <<
-        instr.dst << " " <<
-        instr.alloc_storage.allocation_size << " " <<
-        instr.alloc_storage.alignment << " " <<
-        TVMType2String(instr.alloc_storage.dtype_hint);
       break;
     }
     default:
@@ -820,7 +662,7 @@ void VirtualMachine::InvokeGlobal(const VMFunction& func, const std::vector<Obje
   for (size_t i = 0; i < args.size(); ++i) {
     WriteRegister(i, args[i]);
   }
-  DLOG(INFO) << "func.params= " << func.params.size() << std::endl;
+  DLOG(INFO) << "func.params= " << func.params.size();
 
   code = func.instructions.data();
   pc = 0;
@@ -833,7 +675,7 @@ ObjectRef VirtualMachine::Invoke(const VMFunction& func, const std::vector<Objec
   RunLoop();
   // TODO(wweic) ctx could be obtained from the ctxs list.
   auto alloc = MemoryManager::Global()->GetAllocator(ctxs[0]);
-  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B" << std::endl;
+  DLOG(INFO) << "Memory used: " << alloc->UsedMemory() << " B";
   return return_register;
 }
 
@@ -882,14 +724,6 @@ void VirtualMachine::LoadExecutable(const Executable* exec) {
   CHECK(exec) << "The executable is not created yet.";
   this->exec = exec;
 
-  auto AssignPackedFunc = [&](const PackedFunc& pf, size_t idx) {
-    if (packed_funcs.size() <= idx) {
-      packed_funcs.resize(idx + 1);
-    }
-    CHECK(packed_funcs[idx] == nullptr);
-    packed_funcs[idx] = pf;
-  };
-
   runtime::Module lib = this->exec->lib;
   // Get the list of packed functions.
   CHECK(exec->primitive_map.empty() || lib.operator->())
@@ -898,15 +732,13 @@ void VirtualMachine::LoadExecutable(const Executable* exec) {
   for (const auto& it : this->exec->primitive_map) {
     const auto& packed_name = it.first;
     auto packed_index = static_cast<size_t>(it.second);
-    AssignPackedFunc(lib.GetFunction(packed_name), packed_index);
-  }
-
-  for (const auto& it : this->exec->inline_jit_map) {
-    const auto& func = it.first;
-    auto packed_index = static_cast<size_t>(it.second);
-    AssignPackedFunc(relay::InlineJIT(func, exec->target), packed_index);
+    if (packed_funcs.size() <= packed_index) {
+      packed_funcs.resize(packed_index + 1);
+    }
+    packed_funcs[packed_index] = lib.GetFunction(packed_name);
   }
 }
+
 
 void VirtualMachine::Init(const std::vector<TVMContext>& ctxs) {
   this->ctxs = ctxs;
@@ -945,9 +777,9 @@ void VirtualMachine::RunLoop() {
   while (true) {
   main_loop:
     auto const& instr = this->code[this->pc];
-    DLOG(INFO) << "Executing(" << pc << "): " << instr << std::endl;
+    DLOG(INFO) << "Executing(" << pc << "): " << instr;
 #if USE_RELAY_DEBUG
-    std::cout << instr << std::endl;
+    InstructionPrint(std::cout, instr);
 #endif  // USE_RELAY_DEBUG
 
     switch (instr.op) {
@@ -995,21 +827,17 @@ void VirtualMachine::RunLoop() {
         goto main_loop;
       }
       case Opcode::InvokePacked: {
-        DLOG(INFO) << "InvokedPacked "
-          << "arity=" << instr.arity;
         const auto& func = packed_funcs[instr.packed_index];
         const auto& arity = instr.arity;
         std::vector<ObjectRef> args;
         for (Index i = 0; i < arity; ++i) {
-          DLOG(INFO) <<
-            "arg" << i << " $" << instr.packed_args[i];
-          auto arg = ReadRegister(instr.packed_args[i]);
-          args.push_back(arg);
+          args.push_back(ReadRegister(instr.packed_args[i]));
         }
-
-        // We no longer need to write the registers back, we write directly
-        // through the registers mutably.
         InvokePacked(instr.packed_index, func, arity, instr.output_size, args);
+        for (Index i = 0; i < instr.output_size; ++i) {
+          WriteRegister(instr.packed_args[instr.arity - instr.output_size + i],
+                        args[instr.arity - instr.output_size + i]);
+        }
         pc++;
         goto main_loop;
       }
@@ -1073,15 +901,12 @@ void VirtualMachine::RunLoop() {
       }
       case Opcode::AllocTensor: {
         auto shape = std::vector<int64_t>(instr.alloc_tensor.ndim);
-
         for (uint32_t i = 0; i < instr.alloc_tensor.ndim; ++i) {
           shape[i] = instr.alloc_tensor.shape[i];
         }
-
-        auto storage_obj = ReadRegister(instr.alloc_tensor.storage);
-        auto storage = Downcast<Storage>(storage_obj);
-        auto data = storage->AllocNDArray(0, shape, instr.alloc_tensor.dtype);
-
+        // TODO(wweic) ctx could be obtained from the ctxs list.
+        auto allocator = MemoryManager::Global()->GetAllocator(ctxs[0]);
+        auto data = allocator->Empty(shape, instr.alloc_tensor.dtype, ctxs[0]);
         auto obj = Tensor(data);
         WriteRegister(instr.dst, obj);
         pc++;
@@ -1091,22 +916,19 @@ void VirtualMachine::RunLoop() {
         DLContext cpu_ctx;
         cpu_ctx.device_type = kDLCPU;
         cpu_ctx.device_id = 0;
+
         auto shape_tensor_obj = ReadRegister(instr.alloc_tensor_reg.shape_register);
         const auto* tensor = shape_tensor_obj.as<TensorObj>();
         CHECK(tensor != nullptr);
         NDArray shape_tensor = tensor->data.CopyTo(cpu_ctx);
-        const DLTensor* dl_tensor = shape_tensor.operator->();
-        CHECK_EQ(dl_tensor->dtype.code, 0u);
-        CHECK_LE(dl_tensor->dtype.bits, 64);
-        int64_t* dims = reinterpret_cast<int64_t*>(dl_tensor->data);
+
+        int64_t* dims = static_cast<int64_t*>(shape_tensor->data);
         auto num_dims = shape_tensor->shape[0];
-        auto shape = std::vector<int64_t>(num_dims);
+        auto shape = std::vector<int64_t>(shape_tensor->shape[0]);
         shape.assign(dims, dims + num_dims);
-
-        auto storage_obj = ReadRegister(instr.alloc_tensor_reg.storage);
-        auto storage = Downcast<Storage>(storage_obj);
-        auto data = storage->AllocNDArray(0, shape, instr.alloc_tensor_reg.dtype);
-
+        // TODO(wweic) ctx could be obtained from the ctxs list.
+        auto allocator = MemoryManager::Global()->GetAllocator(ctxs[0]);
+        auto data = allocator->Empty(shape, instr.alloc_tensor_reg.dtype, ctxs[0]);
         auto obj = Tensor(data);
         WriteRegister(instr.dst, obj);
         pc++;
@@ -1128,20 +950,6 @@ void VirtualMachine::RunLoop() {
           free_vars.push_back(ReadRegister(instr.free_vars[i]));
         }
         WriteRegister(instr.dst, Closure(instr.func_index, free_vars));
-        pc++;
-        goto main_loop;
-      }
-      case Opcode::AllocStorage: {
-        auto size = LoadScalarInt(instr.alloc_storage.allocation_size);
-        auto alignment = LoadScalarInt(instr.alloc_storage.alignment);
-
-        DLOG(INFO) <<
-          "AllocStorage: allocation_size=" << size <<
-          "alignment=" << alignment <<
-          "dtype_hint=" << TVMType2String(instr.alloc_storage.dtype_hint);
-
-        auto storage = make_storage(size, alignment, instr.alloc_storage.dtype_hint, ctxs[0]);
-        WriteRegister(instr.dst, storage);
         pc++;
         goto main_loop;
       }

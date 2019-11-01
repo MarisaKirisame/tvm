@@ -27,9 +27,6 @@
 #include <tvm/runtime/object.h>
 #include <tvm/runtime/packed_func.h>
 #include <tvm/runtime/registry.h>
-#include <tvm/node/node.h>
-#include <tvm/relay/expr.h>
-#include <tvm/build_module.h>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -141,7 +138,6 @@ enum class Opcode {
   GetTag = 13U,
   LoadConsti = 14U,
   Fatal = 15U,
-  AllocStorage = 16U,
 };
 
 /*! \brief A single virtual machine instruction.
@@ -162,8 +158,6 @@ struct Instruction {
 
   union {
     struct /* AllocTensor Operands */ {
-      /*! \brief The storage to allocate from. */
-      RegName storage;
       /*! \brief The number of dimensions. */
       uint32_t ndim;
       /*! \brief The shape of tensor. */
@@ -172,8 +166,6 @@ struct Instruction {
       DLDataType dtype;
     } alloc_tensor;
     struct /* AllocTensorReg Operands */ {
-      /*! \brief The storage to allocate from. */
-      RegName storage;
       /*! \brief The register to read the shape out of. */
       RegName shape_register;
       /*! \brief The datatype of tensor to be allocated. */
@@ -261,14 +253,6 @@ struct Instruction {
       /*! \brief The free variables as an array. */
       RegName* free_vars;
     };
-    struct /* AllocStorage Operands */ {
-      /*! \brief The size of the allocation. */
-      RegName allocation_size;
-      /*! \brief The alignment of the allocation. */
-      RegName alignment;
-      /*! \brief The hint of the dtype. */
-      DLDataType dtype_hint;
-    } alloc_storage;
   };
 
   /*! \brief Construct a return instruction.
@@ -290,23 +274,19 @@ struct Instruction {
   static Instruction InvokePacked(Index packed_index, Index arity, Index output_size,
                                   const std::vector<RegName>& args);
   /*! \brief Construct an allocate tensor instruction with constant shape.
-   *  \param storage The storage to allocate out of.
    *  \param shape The shape of the tensor.
    *  \param dtype The dtype of the tensor.
    *  \param dst The destination register.
    *  \return The allocate tensor instruction.
    */
-  static Instruction AllocTensor(RegName storage,
-                                 const std::vector<int64_t>& shape, DLDataType dtype, RegName dst);
+  static Instruction AllocTensor(std::vector<int64_t> shape, DLDataType dtype, RegName dst);
   /*! \brief Construct an allocate tensor instruction with register.
-   *  \param storage The storage to allocate out of.
    *  \param shape_register The register containing the shape.
    *  \param dtype The dtype of the tensor.
    *  \param dst The destination register.
    *  \return The allocate tensor instruction.
    */
-  static Instruction AllocTensorReg(RegName storage,
-                                    RegName shape_register, DLDataType dtype, RegName dst);
+  static Instruction AllocTensorReg(RegName shape_register, DLDataType dtype, RegName dst);
   /*! \brief Construct an allocate datatype instruction.
    *  \param tag The datatype tag.
    *  \param num_fields The number of fields for the datatype.
@@ -315,7 +295,7 @@ struct Instruction {
    *  \return The allocate instruction tensor.
    */
   static Instruction AllocADT(Index tag, Index num_fields, const std::vector<RegName>& fields,
-                              RegName dst);
+                                   RegName dst);
   /*! \brief Construct an allocate closure instruction.
    *  \param func_index The index of the function table.
    *  \param num_freevar The number of free variables.
@@ -383,16 +363,6 @@ struct Instruction {
    *  \return The move instruction.
    */
   static Instruction Move(RegName src, RegName dst);
-
-   /*! \brief Allocate a storage block.
-   *  \param size The size of the allocation.
-   *  \param alignment The allocation's alignment.
-   *  \param dtype_hint The data type hint for the allocator.
-   *  \param dst The destination to place the storage.
-   *  \return The alloc storage instruction.
-   */
-  static Instruction AllocStorage(RegName size, RegName alignment,
-                                  DLDataType dtype_hint, RegName dst);
 
   Instruction();
   Instruction(const Instruction& instr);
@@ -537,7 +507,7 @@ class Executable : public ModuleNode {
    */
   std::string GetBytecode() const;
 
-  /*!
+/*!
    * \brief Print the detailed statistics of the given code, i.e. number of
    * globls and constants, etc.
    */
@@ -567,18 +537,10 @@ class Executable : public ModuleNode {
    * corresponds to the position of the `packed_funcs` list in a `VirtualMachine` object.
    */
   std::unordered_map<std::string, Index> primitive_map;
-  std::unordered_map<relay::Function, Index, NodeHash, NodeEqual> inline_jit_map;
   /*! \brief The virtual machine's function table. */
   std::vector<VMFunction> functions;
-  size_t NewPackedFuncIndex() {
-    ++next_packed_func_index;
-    return next_packed_func_index - 1;
-  }
 
-  Target target;
  private:
-  size_t next_packed_func_index = 0;
-
   /*!
    * \brief Save the globals.
    *
@@ -688,16 +650,6 @@ class VirtualMachine : public runtime::ModuleNode {
                             Index output_size,
                             const std::vector<ObjectRef>& args);
 
-  /*! \brief Construct a invoke packed instruction.
-   *  \param pf The PackedFunc.
-   *  \param arity The arity of the function.
-   *  \param output_size The number of outputs of the packed function.
-   *  \param args The argument registers.
-   *  \return The invoke packed instruction.
-   */
-  Instruction InvokeNewPacked(const PackedFunc& pf, Index arity, Index output_size,
-                              const std::vector<RegName>& args);
-
   virtual ~VirtualMachine() {}
 
   const char* type_key() const final {
@@ -714,8 +666,6 @@ class VirtualMachine : public runtime::ModuleNode {
  protected:
   /*! \brief The virtual machine's packed function table. */
   std::vector<PackedFunc> packed_funcs;
-  /*! \brief The virtual machine's function table. */
-  std::vector<VMFunction> functions;
   /*! \brief The current stack of call frames. */
   std::vector<VMFrame> frames;
   /*! \brief The fuction table index of the current function. */
