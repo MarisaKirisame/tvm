@@ -182,6 +182,13 @@ class IRModuleNode : public Object {
   TVM_DLL BaseFunc Lookup(const GlobalVar& var) const;
 
   /*!
+   * \brief Check if a global function exist by its variable.
+   * \param var The global var to lookup.
+   * \returns Wether the function named by the variable argument exist.
+   */
+  TVM_DLL bool Exist(const GlobalVar& var) const;
+
+  /*!
    * \brief Look up a global function by its string name
    * \param name The name of the function.
    * \returns The function named by the argument.

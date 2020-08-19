@@ -218,7 +218,12 @@ void IRModuleNode::Add(const GlobalVar& var, const BaseFunc& f, bool update) {
 }
 
 void IRModuleNode::AddUnchecked(const GlobalVar& var, const BaseFunc& func) {
-  this->functions.Set(var, func);
+  auto* fn = func.as<tvm::relay::FunctionNode>();
+  if (fn) {
+    this->functions.Set(var, Downcast<tvm::relay::Function>(tvm::relay::DeDup(GetRef<tvm::relay::Function>(fn))));
+  } else {
+    this->functions.Set(var, func);
+  }
 
   auto it = global_var_map_.find(var->name_hint);
   if (it != global_var_map_.end()) {
@@ -282,6 +287,11 @@ BaseFunc IRModuleNode::Lookup(const GlobalVar& var) const {
   auto it = functions.find(var);
   CHECK(it != functions.end()) << "There is no definition of " << var->name_hint;
   return (*it).second;
+}
+
+bool IRModuleNode::Exist(const GlobalVar& var) const {
+  auto it = functions.find(var);
+  return it != functions.end();
 }
 
 BaseFunc IRModuleNode::Lookup(const String& name) const {

@@ -923,6 +923,31 @@ transform::Sequential MemoryOpt(tvm::Target host_target) {
   return transform::Sequential(pass_seqs);
 }
 
+Pass CheckPrimeFunc() {
+  runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)> pass_func =
+    [=](Function f, IRModule m, PassContext pc) {
+      struct CheckPrimeFuncVisitor : ExprVisitor {
+        bool inside_primitive = false;
+        void VisitExpr_(const ConstantNode* op) override {
+          CHECK_EQ(inside_primitive, false);
+        }
+        void VisitExpr_(const FunctionNode* op) override {
+          if (op->HasNonzeroAttr(attr::kPrimitive)) {
+            CHECK_EQ(inside_primitive, false);
+            inside_primitive = true;
+            VisitExpr(op->body);
+            inside_primitive = false;
+          } else {
+            VisitExpr(op->body);
+          }
+        }
+      } vis;
+      vis(f);
+      return f;
+    };
+  return CreateFunctionPass(pass_func, 1, "CheckPrimeFunc", {});
+}
+
 IRModule VMCompiler::OptimizeModule(const IRModule& mod, const TargetsMap& targets,
                                     const Target& target_host) {
   Array<Pass> pass_seqs;
@@ -956,14 +981,19 @@ IRModule VMCompiler::OptimizeModule(const IRModule& mod, const TargetsMap& targe
     }
     *rv = false;
   });
+
   pass_seqs.push_back(transform::EliminateCommonSubexpr(fskip));
   pass_seqs.push_back(transform::SimplifyExpr());
   pass_seqs.push_back(transform::InlinePrimitives());
 
+
   pass_seqs.push_back(transform::CombineParallelConv2D(3));
   pass_seqs.push_back(transform::CombineParallelDense(3));
   pass_seqs.push_back(transform::CombineParallelBatchMatmul(3));
+
   pass_seqs.push_back(transform::FoldConstant());
+  //pass_seqs.push_back(tvm::transform::PrintIR());
+  //pass_seqs.push_back(CheckPrimeFunc());
   pass_seqs.push_back(transform::FoldScaleAxis());
   pass_seqs.push_back(transform::CanonicalizeCast());
   pass_seqs.push_back(transform::CanonicalizeOps());
@@ -1004,7 +1034,6 @@ IRModule VMCompiler::OptimizeModule(const IRModule& mod, const TargetsMap& targe
 }
 
 void VMCompiler::PopulateGlobalMap() {
-  // First we populate global map.
   size_t global_index = 0;
   for (auto named_func : context_.module->functions) {
     auto gvar = named_func.first;
