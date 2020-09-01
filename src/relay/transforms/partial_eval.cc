@@ -91,6 +91,7 @@
  */
 #include <tvm/ir/type_functor.h>
 #include <tvm/relay/analysis.h>
+#include <tvm/relay/feature.h>
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/feature.h>
 #include <tvm/relay/interpreter.h>
@@ -776,8 +777,9 @@ class PartialEvaluator : public ExprFunctor<PStatic(const Expr& e, LetList* ll)>
 
   Func VisitFuncStatic(const Function& func, const Expr& var) {
     CHECK(IsAtomic(var));
+    // todo: figure out primitive semantic
     if (func->HasNonzeroAttr(attr::kPrimitive)) {
-      return ConstEvaluateFunc(func);
+      // return ConstEvaluateFunc(func);
     }
     std::vector<std::pair<Var, PStatic> > free_vars;
     for (const auto& v : FreeVars(func)) {
@@ -1200,7 +1202,7 @@ namespace transform {
 Pass PartialEval() {
   runtime::TypedPackedFunc<IRModule(IRModule, PassContext)> pass_func =
       [=](IRModule m, PassContext pc) { return relay::PartialEval(m); };
-  return CreateModulePass(pass_func, 1, "PartialEval", {});
+  return CreateModulePass(pass_func, 1, "PartialEvaluate", {});
 }
 
 TVM_REGISTER_GLOBAL("relay._transform.PartialEvaluate").set_body_typed(PartialEval);
